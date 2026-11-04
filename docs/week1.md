@@ -25,6 +25,8 @@ Tests 09–10 (32-bit Thumb-2) are week 2.
 4. **Thumb bit.** Addresses loaded into PC by `BX`, `POP {pc}` and the reset vector have bit 0 = 1
    to mean Thumb. Clear it before using the address. Cortex-M only runs Thumb; bit 0 = 0 is a fault.
 5. **Halting.** `BKPT` should call `cpu_halt(cpu, "bkpt #%u", imm)`. The tests look for the "bkpt" prefix.
+   Leave PC at the BKPT's own address, as a debugger halt reports it (`test_reset` checks this).
+   The BKPT still counts as one step.
 
 ## 16-bit decode, top level (bits [15:10], ARM ARM A5.2)
 
