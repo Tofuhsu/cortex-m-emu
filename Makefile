@@ -26,7 +26,7 @@ $(BUILD)/progs/%.bin: tests/progs/%.s tests/progs/vectors.inc | $(BUILD)/progs
 	$(LD) -Ttext=0x08000000 -o $(BUILD)/progs/$*.elf $(BUILD)/progs/$*.o
 	$(OBJCOPY) -O binary $(BUILD)/progs/$*.elf $@
 
-test: $(BUILD)/test_runner progs
+test: $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
 	./$(BUILD)/test_runner
 
 $(BUILD) $(BUILD)/progs:
