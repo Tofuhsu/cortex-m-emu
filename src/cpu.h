@@ -17,6 +17,7 @@
 typedef struct {
     uint32_t r[16];      /* r0-r12, SP (r13), LR (r14), PC (r15) */
     bool n, z, c, v;     /* APSR condition flags */
+    uint16_t ipsr;       /* 0 = Thread mode; otherwise active exception number */
     uint64_t steps;      /* instructions executed */
     bool halted;
     char halt_reason[128];

@@ -82,9 +82,115 @@ static bool condition_passed(const cpu_t *cpu, unsigned cond)
     }
 }
 
-/* Shared by register branches and stack returns; exception return is not modeled yet. */
-static void write_pc_thumb(cpu_t *cpu, uint32_t target)
+#define XPSR_T         (UINT32_C(1) << 24)
+#define XPSR_STACK_PAD (UINT32_C(1) << 9)
+#define XPSR_IPSR_MASK UINT32_C(0x1FF)
+#define EXC_RETURN_THREAD_MSP UINT32_C(0xFFFFFFF9)
+
+/* Only NZCV, Thumb state and IPSR are modeled; IT/ICI and FP state are absent. */
+static uint32_t pack_xpsr(const cpu_t *cpu)
 {
+    return ((uint32_t)cpu->n << 31) | ((uint32_t)cpu->z << 30)
+         | ((uint32_t)cpu->c << 29) | ((uint32_t)cpu->v << 28)
+         | XPSR_T | (cpu->ipsr & XPSR_IPSR_MASK);
+}
+
+/* Basic frame on MSP, with fixed STKALIGN=1 and vector-table base=0. */
+static void exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
+                             uint32_t return_address)
+{
+    if (cpu->ipsr != 0) {
+        cpu_halt(cpu, "nested exception entry not implemented");
+        return;
+    }
+    uint32_t old_sp = cpu->r[SP];
+    if ((old_sp & 3u) != 0) {
+        cpu_halt(cpu, "exception entry with unaligned SP 0x%08x", old_sp);
+        return;
+    }
+    uint32_t handler = bus_read32(bus, number * 4u);
+    if (bus_fault(bus)) {
+        return;
+    }
+    if ((handler & 1u) == 0) {
+        cpu_halt(cpu, "exception %u vector 0x%08x has Thumb bit clear", number, handler);
+        return;
+    }
+
+    uint32_t frame_sp = (old_sp - 32u) & ~7u;
+    uint32_t psr = pack_xpsr(cpu);
+    if ((old_sp & 4u) != 0) {
+        psr |= XPSR_STACK_PAD;
+    }
+    const uint32_t frame[8] = {
+        cpu->r[0], cpu->r[1], cpu->r[2], cpu->r[3],
+        cpu->r[12], cpu->r[LR], return_address, psr,
+    };
+    for (unsigned i = 0; i < 8; i++) {
+        bus_write32(bus, frame_sp + 4u * i, frame[i]);
+        if (bus_fault(bus)) {
+            return;
+        }
+    }
+    /* Commit core state after successful transfers. Padding is not written. */
+    cpu->r[SP] = frame_sp;
+    cpu->r[LR] = EXC_RETURN_THREAD_MSP;
+    cpu->ipsr = (uint16_t)number;
+    cpu->r[PC] = handler & ~1u;
+}
+
+static void exception_return(cpu_t *cpu, bus_t *bus, uint32_t target)
+{
+    if (target != EXC_RETURN_THREAD_MSP) {
+        cpu_halt(cpu, "EXC_RETURN 0x%08x not implemented (only Thread/MSP basic frame)", target);
+        return;
+    }
+    uint32_t frame_sp = cpu->r[SP];
+    if ((frame_sp & 3u) != 0) {
+        cpu_halt(cpu, "exception return with unaligned SP 0x%08x", frame_sp);
+        return;
+    }
+    uint32_t frame[8];
+    for (unsigned i = 0; i < 8; i++) {
+        frame[i] = bus_read32(bus, frame_sp + 4u * i);
+        if (bus_fault(bus)) {
+            return;
+        }
+    }
+    uint32_t psr = frame[7];
+    /* The stacked PC is even: its Thumb state is stored separately in xPSR.T. */
+    if ((psr & XPSR_T) == 0 || (frame[6] & 1u) != 0 ||
+        (psr & XPSR_IPSR_MASK) != 0) {
+        cpu_halt(cpu, "invalid Thread exception frame (PC=0x%08x xPSR=0x%08x)",
+                 frame[6], psr);
+        return;
+    }
+    if ((psr & 0x0600FC00u) != 0) {
+        cpu_halt(cpu, "exception return with IT/ICI state not implemented");
+        return;
+    }
+    cpu->r[0] = frame[0];
+    cpu->r[1] = frame[1];
+    cpu->r[2] = frame[2];
+    cpu->r[3] = frame[3];
+    cpu->r[12] = frame[4];
+    cpu->r[LR] = frame[5];
+    cpu->r[PC] = frame[6];
+    cpu->r[SP] = (frame_sp + 32u) | ((psr & XPSR_STACK_PAD) != 0 ? 4u : 0u);
+    cpu->n = (psr >> 31) != 0;
+    cpu->z = ((psr >> 30) & 1u) != 0;
+    cpu->c = ((psr >> 29) & 1u) != 0;
+    cpu->v = ((psr >> 28) & 1u) != 0;
+    cpu->ipsr = (uint16_t)(psr & XPSR_IPSR_MASK);
+}
+
+/* BX and POP PC can perform exception return; MOV PC does not use this path. */
+static void write_pc_thumb(cpu_t *cpu, bus_t *bus, uint32_t target)
+{
+    if (cpu->ipsr != 0 && (target & 0xF0000000u) == 0xF0000000u) {
+        exception_return(cpu, bus, target);
+        return;
+    }
     if ((target & 1u) == 0) {
         cpu_halt(cpu, "branch target 0x%08x has Thumb bit clear", target);
         return;
@@ -215,7 +321,7 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
     if ((insn & 0xFF87u) == 0x4700u) {
         unsigned rm = (insn >> 3) & 0x0Fu;
         uint32_t target = rm == PC ? pc + 4u : cpu->r[rm];
-        write_pc_thumb(cpu, target);
+        write_pc_thumb(cpu, bus, target);
         return;
     }
 
@@ -324,8 +430,14 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         }
         cpu->r[SP] = address;
         if ((registers & (1u << PC)) != 0) {
-            write_pc_thumb(cpu, pc_target);
+            write_pc_thumb(cpu, bus, pc_target);
         }
+        return;
+    }
+
+    /* SVC T1: 1101 1111 imm8. Stack the NEXT instruction, not pc+4. */
+    if ((insn & 0xFF00u) == 0xDF00u) {
+        exception_enter(cpu, bus, 11u, pc + 2u);
         return;
     }
 
@@ -414,6 +526,22 @@ static bool thumb_expand_imm(uint16_t imm12, bool carry_in, thumb_imm_t *expande
 
 static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
+    /* MRS T1: 1111 0011 1110 1111 / 1000 Rd SYSm. */
+    if (hw1 == 0xF3EFu && (hw2 & 0xF000u) == 0x8000u) {
+        unsigned rd = (hw2 >> 8) & 0x0Fu;
+        unsigned sysm = hw2 & 0xFFu;
+        if (rd == SP || rd == PC) {
+            cpu_halt(cpu, "UNPREDICTABLE MRS Rd=%u at 0x%08x", rd, pc);
+            return;
+        }
+        if (sysm != 5u) {
+            cpu_halt(cpu, "MRS SYSm 0x%02x not implemented at 0x%08x", sysm, pc);
+            return;
+        }
+        cpu->r[rd] = cpu->ipsr & XPSR_IPSR_MASK;
+        return;
+    }
+
     /* BL T1: 11110 S imm10 / 11 J1 1 J2 imm11. */
     if ((hw1 & 0xF800u) == 0xF000u && (hw2 & 0xD000u) == 0xD000u) {
         uint32_t s = (hw1 >> 10) & 1u;
