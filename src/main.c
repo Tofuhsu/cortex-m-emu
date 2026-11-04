@@ -12,6 +12,8 @@
 #include "bus.h"
 #include "cpu.h"
 #include "loader.h"
+#include "periph/gpio.h"
+#include "periph/rcc.h"
 
 static void dump_registers(const cpu_t *cpu)
 {
@@ -20,6 +22,18 @@ static void dump_registers(const cpu_t *cpu)
     }
     printf("N=%d Z=%d C=%d V=%d   steps=%llu\n", cpu->n, cpu->z, cpu->c, cpu->v,
            (unsigned long long)cpu->steps);
+}
+
+static void observe_pa5(void *ctx, const char *name,
+                        uint16_t old_odr, uint16_t new_odr)
+{
+    const cpu_t *cpu = ctx;
+    (void)name;
+    if (((old_odr ^ new_odr) & (1u << 5)) != 0) {
+        /* cpu_step increments steps after the peripheral write completes. */
+        printf("PA5 -> %u at step %llu\n", (unsigned)((new_odr >> 5) & 1u),
+               (unsigned long long)(cpu->steps + 1u));
+    }
 }
 
 int main(int argc, char **argv)
@@ -45,11 +59,24 @@ int main(int argc, char **argv)
     bus_t *bus = bus_new();
     if (!bus || load_bin(bus, path) != 0) {
         fprintf(stderr, "cannot load %s\n", path);
+        bus_free(bus);
+        return 1;
+    }
+
+    rcc_t *rcc = rcc_new();
+    gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
+    if (!rcc || !gpioa || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
+        bus_add_periph(bus, gpio_as_periph(gpioa)) != 0) {
+        fprintf(stderr, "cannot initialize RCC/GPIOA models\n");
+        bus_free(bus);
+        gpio_free(gpioa);
+        rcc_free(rcc);
         return 1;
     }
 
     cpu_t cpu;
     cpu_reset(&cpu, bus);
+    gpio_set_observer(gpioa, observe_pa5, &cpu);
     while (!cpu.halted && cpu.steps < max_steps) {
         if (trace) {
             printf("%08x: %04x\n", cpu.r[PC], bus_read16(bus, cpu.r[PC]));
@@ -63,6 +90,17 @@ int main(int argc, char **argv)
         printf("note: %u accesses to peripheral addresses with no model (last 0x%08x)\n",
                bus_unmapped_count(bus), bus_last_unmapped_addr(bus));
     }
+    if (gpio_gated_write_count(gpioa)) {
+        printf("note: %llu GPIOA writes ignored while clock disabled\n",
+               (unsigned long long)gpio_gated_write_count(gpioa));
+    }
+    if (rcc_bad_access_count(rcc) || gpio_bad_access_count(gpioa)) {
+        printf("note: unsupported/invalid peripheral accesses: RCC=%llu GPIOA=%llu\n",
+               (unsigned long long)rcc_bad_access_count(rcc),
+               (unsigned long long)gpio_bad_access_count(gpioa));
+    }
     bus_free(bus);
+    gpio_free(gpioa);
+    rcc_free(rcc);
     return 0;
 }
