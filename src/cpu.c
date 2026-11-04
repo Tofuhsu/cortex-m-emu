@@ -109,8 +109,20 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
-    /* ADDS/SUBS (immediate) T2: 00110/00111 Rdn imm8, outside IT blocks. */
     unsigned opcode = insn >> 11;
+
+    /* CMP (immediate) T1: 00101 Rn imm8. Update NZCV without register writeback. */
+    if (opcode == 0x05u) {
+        unsigned rn = (insn >> 8) & 0x07u;
+        uint32_t imm = insn & 0xFFu;
+        uint32_t result = add_with_carry(cpu->r[rn], (uint32_t)~imm, true,
+                                         &cpu->c, &cpu->v);
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
+        return;
+    }
+
+    /* ADDS/SUBS (immediate) T2: 00110/00111 Rdn imm8, outside IT blocks. */
     if (opcode == 0x06u || opcode == 0x07u) {
         unsigned rdn = (insn >> 8) & 0x07u;
         uint32_t imm = insn & 0xFFu;
