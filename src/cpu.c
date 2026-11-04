@@ -121,10 +121,21 @@ static void transfer_memory(cpu_t *cpu, bus_t *bus, unsigned rt, uint32_t addres
 
 static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 {
-    /*
-     * TODO(Jeff): decode by the top bits (ARM ARM A5.2, "16-bit Thumb instruction encoding").
-     * Start with what tests/progs/ needs, one test at a time.
-     */
+    /* Decode only implemented encodings; IT blocks are not modeled yet. */
+
+    /* ADDS (immediate) T1: 0001110 imm3 Rn Rd. */
+    if ((insn & 0xFE00u) == 0x1C00u) {
+        unsigned rd = insn & 0x07u;
+        unsigned rn = (insn >> 3) & 0x07u;
+        uint32_t imm = (insn >> 6) & 0x07u;
+        uint32_t result = add_with_carry(cpu->r[rn], imm, false,
+                                         &cpu->c, &cpu->v);
+        cpu->r[rd] = result;
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
+        return;
+    }
+
     /* MOVS (immediate) T1: 00100 Rd imm8. IT blocks are not supported yet. */
     if ((insn >> 11) == 0x04u) {
         unsigned rd = (insn >> 8) & 0x07u;
@@ -165,6 +176,41 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* A5.2.2: 010000 opcode(4) Rm(3) Rdn/Rn(3). */
+    if ((insn & 0xFC00u) == 0x4000u) {
+        unsigned op = (insn >> 6) & 0x0Fu;
+        unsigned rm = (insn >> 3) & 0x07u;
+        unsigned rn = insn & 0x07u;
+        uint32_t result;
+        if (op == 0xAu) { /* CMP (register) T1: no register writeback. */
+            result = add_with_carry(cpu->r[rn], ~cpu->r[rm], true,
+                                    &cpu->c, &cpu->v);
+        } else if (op == 0xCu) { /* ORRS (register) T1: C and V unchanged. */
+            result = cpu->r[rn] | cpu->r[rm];
+            cpu->r[rn] = result;
+        } else {
+            cpu_halt(cpu, "undefined 16-bit instruction 0x%04x at 0x%08x", insn, pc);
+            return;
+        }
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
+        return;
+    }
+
+    /* MOV (register) T1: 01000110 D Rm(4) Rd(3). Flags unchanged. */
+    if ((insn & 0xFF00u) == 0x4600u) {
+        unsigned rd = (insn & 0x07u) | ((insn >> 4) & 0x08u);
+        unsigned rm = (insn >> 3) & 0x0Fu;
+        uint32_t result = rm == PC ? pc + 4u : cpu->r[rm];
+        if (rd == SP && (result & 3u) != 0) {
+            cpu_halt(cpu, "UNPREDICTABLE MOV to unaligned SP at 0x%08x", pc);
+            return;
+        }
+        /* ALUWritePC is BranchWritePC: discard bit 0, without interworking. */
+        cpu->r[rd] = rd == PC ? result & ~1u : result;
+        return;
+    }
+
     /* BX T1: 0100 0111 0 Rm 000. BLX (bit 7 set) is a different instruction. */
     if ((insn & 0xFF87u) == 0x4700u) {
         unsigned rm = (insn >> 3) & 0x0Fu;
@@ -198,6 +244,13 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         uint32_t offset = (insn & 0xFFu) << 2;
         uint32_t address = cpu->r[SP] + offset;
         transfer_memory(cpu, bus, rt, address, 4, opcode == 0x13u);
+        return;
+    }
+
+    /* ADD (SP plus immediate) T1: 10101 Rd imm8. Flags unchanged. */
+    if (opcode == 0x15u) {
+        unsigned rd = (insn >> 8) & 0x07u;
+        cpu->r[rd] = cpu->r[SP] + ((insn & 0xFFu) << 2);
         return;
     }
 
@@ -287,6 +340,11 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
             }
             cpu->r[PC] = pc + 4u + (uint32_t)offset;
         }
+        return;
+    }
+
+    /* NOP T1 only. Other 0xBFxx encodings include IT and other hints. */
+    if (insn == 0xBF00u) {
         return;
     }
 
@@ -394,7 +452,7 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
             cpu_halt(cpu, "modified-immediate S=1 not implemented at 0x%08x", pc);
             return;
         }
-        if (op != 0x1u && op != 0x2u && op != 0x4u) {
+        if (op != 0x0u && op != 0x1u && op != 0x2u && op != 0x4u) {
             cpu_halt(cpu, "modified-immediate op 0x%x not implemented at 0x%08x", op, pc);
             return;
         }
@@ -412,7 +470,9 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
             return;
         }
         uint32_t result;
-        if (op == 0x1u) {
+        if (op == 0x0u) {
+            result = cpu->r[rn] & immediate.value; /* AND.W */
+        } else if (op == 0x1u) {
             result = cpu->r[rn] & ~immediate.value; /* BIC.W */
         } else if (op == 0x2u) {
             result = rn == PC ? immediate.value : cpu->r[rn] | immediate.value; /* MOV.W / ORR.W */
@@ -460,6 +520,10 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
 
     if (bus_fault(bus)) {
         cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+    }
+    /* Keep register dumps at the instruction that stopped execution. */
+    if (cpu->halted) {
+        cpu->r[PC] = pc;
     }
     cpu->steps++;
     return cpu->halted ? -1 : 0;
