@@ -1,9 +1,9 @@
 # cortex-m-emu
 
 An instruction-set emulator for the Arm Cortex-M4 (ARMv7-M, Thumb/Thumb-2), written in C11.
-Goal: run my own bare-metal STM32F446 firmware ([stm32-baremetal-sensor-node](../stm32-baremetal-sensor-node)) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
+Goal: run my own bare-metal STM32F446 firmware (a separate project, not yet public) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
 
-**Status:** week 1. Memory bus, loader and test suite exist; the CPU core is being written.
+**Status:** Weeks 1–2 of 5. The CPU core passes the 10 test programs and runs my STM32F446 blink firmware (`-O0` build) with RCC and GPIOA models. PA5 toggles every 3,500,022–3,500,024 instructions, matching the count from the disassembly (7-instruction delay loop × 500,000 iterations plus call overhead). Counts are instructions, not time.
 
 ## Build and test
 
@@ -35,5 +35,5 @@ Instruction-accurate, not cycle-accurate: no pipeline, wait states or bus timing
 
 ## AI assistance
 
-Written with an AI assistant: Makefile, CI, `src/bus.c`, `src/loader.c`, `src/main.c`, the test programs and test runner, and the docs.
-Written by the author: the CPU core (`src/cpu.c`) and peripheral models. This split is kept accurate as the project grows.
+Written with an AI assistant: Makefile, CI, `src/bus.c`, `src/loader.c`, `src/main.c` (except the PA5 observer), the test programs (including the RCC/GPIO test, `tests/progs/11_gpio.s`) and test runner, and the docs.
+Written by the author: the CPU core (`src/cpu.c`), the peripheral models (`src/periph/`) and the PA5 observer in `src/main.c`. This split is kept accurate as the project grows.
