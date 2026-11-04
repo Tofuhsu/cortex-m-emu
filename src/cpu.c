@@ -33,8 +33,17 @@ void cpu_reset(cpu_t *cpu, bus_t *bus)
     }
 }
 
+/* Interpret a 32-bit two's-complement bit pattern without an out-of-range signed cast. */
+static int64_t signed32(uint32_t value)
+{
+    if ((value & 0x80000000u) != 0) {
+        return (int64_t)value - INT64_C(4294967296);
+    }
+    return (int64_t)value;
+}
+
 /*
- * TODO(Jeff): AddWithCarry() from the ARM ARM pseudocode (chapter A2, "Integer arithmetic").
+ * AddWithCarry() from the ARM ARM pseudocode (chapter A2, "Integer arithmetic").
  * ADDS, SUBS and CMP are all built on it:
  *   ADDS: add_with_carry(a, b, false)
  *   SUBS: add_with_carry(a, ~b, true)   (a - b == a + ~b + 1)
@@ -42,10 +51,13 @@ void cpu_reset(cpu_t *cpu, bus_t *bus)
  */
 static uint32_t add_with_carry(uint32_t x, uint32_t y, bool carry_in, bool *carry_out, bool *overflow)
 {
-    (void)x; (void)y; (void)carry_in;
-    *carry_out = false;
-    *overflow = false;
-    return 0;
+    uint64_t unsigned_sum = (uint64_t)x + (uint64_t)y + (uint64_t)carry_in;
+    int64_t signed_sum = signed32(x) + signed32(y) + (int64_t)carry_in;
+    uint32_t result = (uint32_t)unsigned_sum;
+
+    *carry_out = (uint64_t)result != unsigned_sum;
+    *overflow = signed32(result) != signed_sum;
+    return result;
 }
 
 static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
@@ -55,7 +67,6 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
      * Start with what tests/progs/ needs, one test at a time.
      */
     (void)bus;
-    (void)add_with_carry;
 
     /* MOVS (immediate) T1: 00100 Rd imm8. IT blocks are not supported yet. */
     if ((insn >> 11) == 0x04u) {
@@ -65,6 +76,23 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         cpu->n = (result >> 31) != 0;
         cpu->z = result == 0;
         /* T1 preserves C and V. */
+        return;
+    }
+
+    /* ADDS/SUBS (immediate) T2: 00110/00111 Rdn imm8, outside IT blocks. */
+    unsigned opcode = insn >> 11;
+    if (opcode == 0x06u || opcode == 0x07u) {
+        unsigned rdn = (insn >> 8) & 0x07u;
+        uint32_t imm = insn & 0xFFu;
+        uint32_t result;
+        if (opcode == 0x06u) {
+            result = add_with_carry(cpu->r[rdn], imm, false, &cpu->c, &cpu->v);
+        } else {
+            result = add_with_carry(cpu->r[rdn], (uint32_t)~imm, true, &cpu->c, &cpu->v);
+        }
+        cpu->r[rdn] = result;
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
         return;
     }
 
