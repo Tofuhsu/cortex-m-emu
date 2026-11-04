@@ -218,8 +218,8 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
             cpu_halt(cpu, "empty PUSH register list");
             return;
         }
-        uint32_t address = cpu->r[SP] - 4u * count;
-        cpu->r[SP] = address;
+        uint32_t new_sp = cpu->r[SP] - 4u * count;
+        uint32_t address = new_sp;
         for (unsigned r = 0; r <= LR; r++) {
             if ((registers & (1u << r)) != 0) {
                 bus_write32(bus, address, cpu->r[r]);
@@ -229,6 +229,8 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
                 address += 4u;
             }
         }
+        /* Write back SP only after every selected store has succeeded. */
+        cpu->r[SP] = new_sp;
         return;
     }
 
@@ -290,6 +292,48 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
     cpu_halt(cpu, "undefined 16-bit instruction 0x%04x at 0x%08x", insn, pc);
 }
 
+static uint32_t ror32(uint32_t value, unsigned amount)
+{
+    amount &= 31u;
+    if (amount == 0) {
+        return value;
+    }
+    return (value >> amount) | (value << (32u - amount));
+}
+
+typedef struct {
+    uint32_t value;
+    bool carry;
+} thumb_imm_t;
+
+/* ARM ARM A5.3.2, ThumbExpandImm_C. False means an invalid/UNPREDICTABLE encoding. */
+static bool thumb_expand_imm(uint16_t imm12, bool carry_in, thumb_imm_t *expanded)
+{
+    if (imm12 > 0x0FFFu) {
+        return false;
+    }
+    thumb_imm_t result = { .value = 0, .carry = carry_in };
+    if ((imm12 & 0x0C00u) == 0) {
+        unsigned pattern = (imm12 >> 8) & 0x03u;
+        uint32_t imm8 = imm12 & 0xFFu;
+        if (pattern != 0 && imm8 == 0) {
+            return false;
+        }
+        switch (pattern) {
+        case 0: result.value = imm8; break;
+        case 1: result.value = (imm8 << 16) | imm8; break;
+        case 2: result.value = (imm8 << 24) | (imm8 << 8); break;
+        case 3: result.value = (imm8 << 24) | (imm8 << 16) | (imm8 << 8) | imm8; break;
+        }
+    } else {
+        uint32_t unrotated = 0x80u | (imm12 & 0x7Fu);
+        result.value = ror32(unrotated, imm12 >> 7);
+        result.carry = (result.value >> 31) != 0;
+    }
+    *expanded = result;
+    return true;
+}
+
 static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
     (void)bus;
@@ -313,7 +357,46 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         return;
     }
 
-    /* TODO(Jeff): remaining Thumb-2 instructions, including modified-immediate logic. */
+    /* Modified immediate: 11110 i 0 op S Rn / 0 imm3 Rd imm8. BL is decoded first. */
+    if ((hw1 & 0xFA00u) == 0xF000u && (hw2 & 0x8000u) == 0) {
+        unsigned op = (hw1 >> 5) & 0x0Fu;
+        unsigned rn = hw1 & 0x0Fu;
+        unsigned rd = (hw2 >> 8) & 0x0Fu;
+        if ((hw1 & 0x10u) != 0) {
+            cpu_halt(cpu, "modified-immediate S=1 not implemented at 0x%08x", pc);
+            return;
+        }
+        if (op != 0x1u && op != 0x2u && op != 0x4u) {
+            cpu_halt(cpu, "modified-immediate op 0x%x not implemented at 0x%08x", op, pc);
+            return;
+        }
+        if (rd == SP || rd == PC || rn == SP || (rn == PC && op != 0x2u)) {
+            cpu_halt(cpu, "UNPREDICTABLE modified-immediate register encoding at 0x%08x", pc);
+            return;
+        }
+        uint16_t imm12 = (uint16_t)((((hw1 >> 10) & 1u) << 11)
+                                 | (((hw2 >> 12) & 0x07u) << 8)
+                                 | (hw2 & 0xFFu));
+        thumb_imm_t immediate;
+        if (!thumb_expand_imm(imm12, cpu->c, &immediate)) {
+            cpu_halt(cpu, "UNPREDICTABLE modified immediate 0x%03x at 0x%08x",
+                     (unsigned)imm12, pc);
+            return;
+        }
+        uint32_t result;
+        if (op == 0x1u) {
+            result = cpu->r[rn] & ~immediate.value; /* BIC.W */
+        } else if (op == 0x2u) {
+            result = rn == PC ? immediate.value : cpu->r[rn] | immediate.value; /* MOV.W / ORR.W */
+        } else {
+            result = cpu->r[rn] ^ immediate.value; /* EOR.W */
+        }
+        cpu->r[rd] = result;
+        /* S=0 preserves NZCV. immediate.carry is available for future S=1 support. */
+        return;
+    }
+
+    /* TODO(Jeff): remaining Thumb-2 instructions. */
     cpu_halt(cpu, "undefined 32-bit instruction 0x%04x%04x at 0x%08x", hw1, hw2, pc);
 }
 
