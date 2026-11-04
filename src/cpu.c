@@ -343,6 +343,17 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* B (unconditional) T2: 11100 imm11. Flags unchanged. */
+    if ((insn & 0xF800u) == 0xE000u) {
+        uint32_t imm12 = (insn & 0x07FFu) << 1;
+        int32_t offset = (int32_t)imm12; /* imm12 is at most 4094. */
+        if ((imm12 & 0x0800u) != 0) {
+            offset -= 0x1000; /* Sign-extend the 12-bit displacement. */
+        }
+        cpu->r[PC] = pc + 4u + (uint32_t)offset;
+        return;
+    }
+
     /* NOP T1 only. Other 0xBFxx encodings include IT and other hints. */
     if (insn == 0xBF00u) {
         return;
