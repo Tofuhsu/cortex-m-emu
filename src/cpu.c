@@ -57,6 +57,17 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
     (void)bus;
     (void)add_with_carry;
 
+    /* MOVS (immediate) T1: 00100 Rd imm8. IT blocks are not supported yet. */
+    if ((insn >> 11) == 0x04u) {
+        unsigned rd = (insn >> 8) & 0x07u;
+        uint32_t result = insn & 0xFFu;
+        cpu->r[rd] = result;
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
+        /* T1 preserves C and V. */
+        return;
+    }
+
     /* BKPT T1: 1011 1110 imm8 (ARM ARM, BKPT instruction description). */
     if ((insn & 0xFF00u) == 0xBE00u) {
         unsigned imm = insn & 0xFFu;
