@@ -60,6 +60,28 @@ static uint32_t add_with_carry(uint32_t x, uint32_t y, bool carry_in, bool *carr
     return result;
 }
 
+/* ARM ARM A7.3: the 14 conditions used by B<cond> T1. */
+static bool condition_passed(const cpu_t *cpu, unsigned cond)
+{
+    switch (cond) {
+    case 0x0: return cpu->z;                         /* EQ */
+    case 0x1: return !cpu->z;                        /* NE */
+    case 0x2: return cpu->c;                         /* CS/HS */
+    case 0x3: return !cpu->c;                        /* CC/LO */
+    case 0x4: return cpu->n;                         /* MI */
+    case 0x5: return !cpu->n;                        /* PL */
+    case 0x6: return cpu->v;                         /* VS */
+    case 0x7: return !cpu->v;                        /* VC */
+    case 0x8: return cpu->c && !cpu->z;              /* HI */
+    case 0x9: return !cpu->c || cpu->z;              /* LS */
+    case 0xA: return cpu->n == cpu->v;               /* GE */
+    case 0xB: return cpu->n != cpu->v;               /* LT */
+    case 0xC: return !cpu->z && (cpu->n == cpu->v);  /* GT */
+    case 0xD: return cpu->z || (cpu->n != cpu->v);   /* LE */
+    default: return false; /* 0xE and 0xF are not conditions in B<cond> T1. */
+    }
+}
+
 static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 {
     /*
@@ -93,6 +115,20 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         cpu->r[rdn] = result;
         cpu->n = (result >> 31) != 0;
         cpu->z = result == 0;
+        return;
+    }
+
+    /* B<cond> T1: 1101 cond imm8. 0xDE and 0xDF belong to UDF and SVC. */
+    unsigned cond = (insn >> 8) & 0x0Fu;
+    if ((insn & 0xF000u) == 0xD000u && cond < 0xEu) {
+        if (condition_passed(cpu, cond)) {
+            uint32_t imm9 = (insn & 0xFFu) << 1;
+            int32_t offset = (int32_t)imm9; /* imm9 is at most 511. */
+            if ((imm9 & 0x100u) != 0) {
+                offset -= 0x200; /* Sign-extend the 9-bit displacement. */
+            }
+            cpu->r[PC] = pc + 4u + (uint32_t)offset;
+        }
         return;
     }
 
