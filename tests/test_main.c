@@ -15,6 +15,8 @@
 #include "bus.h"
 #include "cpu.h"
 #include "loader.h"
+#include "periph/gpio.h"
+#include "periph/rcc.h"
 
 #define MAX_STEPS 1000
 
@@ -31,16 +33,16 @@ static void check(const char *what, uint32_t actual, uint32_t expected)
 #define CHECK_REG(cpu, n, value) check("r" #n, (cpu)->r[n], (value))
 #define CHECK_FLAG(cpu, f, value) check("flag " #f, (cpu)->f, (value))
 
-/* Load build/progs/<name>.bin, reset, run to BKPT. Returns the bus for memory checks. */
-static bus_t *run(const char *name, cpu_t *cpu)
+/* Load build/progs/<name>.bin into bus, reset, run to BKPT. */
+static void run_on(bus_t *bus, const char *name, cpu_t *cpu)
 {
     char path[256];
     snprintf(path, sizeof path, "build/progs/%s.bin", name);
-    bus_t *bus = bus_new();
     if (load_bin(bus, path) != 0) {
         printf("    cannot load %s (run `make progs`)\n", path);
         test_ok = 0;
-        return bus;
+        memset(cpu, 0, sizeof *cpu);
+        return;
     }
     cpu_reset(cpu, bus);
     while (!cpu->halted && cpu->steps < MAX_STEPS) {
@@ -53,6 +55,13 @@ static bus_t *run(const char *name, cpu_t *cpu)
         printf("    halted early: %s\n", cpu->halt_reason);
         test_ok = 0;
     }
+}
+
+/* Same as run_on() on a bus with no peripheral models. Returns the bus for memory checks. */
+static bus_t *run(const char *name, cpu_t *cpu)
+{
+    bus_t *bus = bus_new();
+    run_on(bus, name, cpu);
     return bus;
 }
 
@@ -165,6 +174,39 @@ static void test_wide_load_store(void)
     bus_free(bus);
 }
 
+/*
+ * RCC + GPIOA models. Single-stepped in Renode 1.17 on 2026-11-04: MODER read-back
+ * and the ODR after each BSRR set/reset match. Two deliberate differences, where
+ * these tests follow RM0390 instead of Renode:
+ *   - Renode does not gate GPIO on RCC_AHB1ENR, so the ODR write before the clock
+ *     is enabled takes effect there (ODR = 0x20 after step 3).
+ *   - For BSRR = 0x00200020 (set and reset PA5 together) Renode clears PA5;
+ *     RM0390 says the set bit has priority, so ODR stays 0x20 here.
+ */
+static void test_gpio(void)
+{
+    cpu_t cpu;
+    bus_t *bus = bus_new();
+    rcc_t *rcc = rcc_new();
+    gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
+    if (!bus || !rcc || !gpioa || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
+        bus_add_periph(bus, gpio_as_periph(gpioa)) != 0) {
+        printf("    cannot set up RCC/GPIOA models\n");
+        test_ok = 0;
+    } else {
+        run_on(bus, "11_gpio", &cpu);
+        check("MODER read back", cpu.r[5], 0xA8000400);
+        check("ODR read back", cpu.r[7], 0x20);
+        check("ODR", gpio_get_odr(gpioa), 0x20);
+        check("gated writes", (uint32_t)gpio_gated_write_count(gpioa), 1);
+        check("bad accesses", (uint32_t)(gpio_bad_access_count(gpioa) + rcc_bad_access_count(rcc)), 0);
+        check("unmapped accesses", bus_unmapped_count(bus), 0);
+    }
+    bus_free(bus);
+    gpio_free(gpioa);
+    rcc_free(rcc);
+}
+
 static void test_bus_rejects_flash_write(void)
 {
     bus_t *bus = bus_new();
@@ -207,6 +249,7 @@ int main(void)
     RUN(test_cond_branches);
     RUN(test_thumb2_logic);
     RUN(test_wide_load_store);
+    RUN(test_gpio);
     printf("\n%d/%d passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
 }

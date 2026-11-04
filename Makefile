@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -O2 -g -Isrc
-LIB_SRC := src/bus.c src/cpu.c src/loader.c
+LIB_SRC := src/bus.c src/cpu.c src/loader.c src/periph/rcc.c src/periph/gpio.c
 BUILD   := build
 
 # Test programs are assembled with the ARM toolchain and linked at the start of flash.
@@ -13,10 +13,10 @@ PROGS   := $(patsubst tests/progs/%.s,$(BUILD)/progs/%.bin,$(wildcard tests/prog
 
 all: $(BUILD)/cortex-m-emu
 
-$(BUILD)/cortex-m-emu: src/main.c $(LIB_SRC) src/*.h | $(BUILD)
+$(BUILD)/cortex-m-emu: src/main.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
 	$(CC) $(CFLAGS) src/main.c $(LIB_SRC) -o $@
 
-$(BUILD)/test_runner: tests/test_main.c $(LIB_SRC) src/*.h | $(BUILD)
+$(BUILD)/test_runner: tests/test_main.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
 	$(CC) $(CFLAGS) tests/test_main.c $(LIB_SRC) -o $@
 
 progs: $(PROGS)

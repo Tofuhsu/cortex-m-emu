@@ -17,7 +17,7 @@ Needs a host C compiler and `arm-none-eabi-binutils` (for the test programs).
 
 ## How the tests are checked
 
-Each program in `tests/progs/` ends with `BKPT`. The expected registers, flags and memory in `tests/test_main.c` were cross-checked by single-stepping the same binaries in [Renode](https://renode.io) 1.17 (2026-11-03). The one deliberate difference, LR after reset, is explained in the test file.
+Each program in `tests/progs/` ends with `BKPT`. The expected registers, flags and memory in `tests/test_main.c` were cross-checked by single-stepping the same binaries in [Renode](https://renode.io) 1.17 (2026-11-03/04). Where Renode and the Arm or ST manuals disagree, the tests follow the manuals: LR after reset (ARMv7-M ARM), and GPIO clock gating and BSRR set priority (RM0390). Each case is explained in the test file.
 
 ## Plan
 
