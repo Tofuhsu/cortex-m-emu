@@ -19,14 +19,18 @@ void cpu_halt(cpu_t *cpu, const char *fmt, ...)
 void cpu_reset(cpu_t *cpu, bus_t *bus)
 {
     memset(cpu, 0, sizeof *cpu);
-    /*
-     * TODO(Jeff): reset sequence (ARMv7-M ARM, section "Reset behavior" in chapter B1).
-     *   - SP <- word at address 0x00000000
-     *   - PC <- word at address 0x00000004, with bit 0 cleared.
-     *           Bit 0 must be 1 (Thumb state); if it is 0, halt: a real Cortex-M would fault.
-     *   - LR <- 0xFFFFFFFF
-     */
-    (void)bus;
+    cpu->r[SP] = bus_read32(bus, 0x00000000u);
+    uint32_t reset_vector = bus_read32(bus, 0x00000004u);
+    cpu->r[PC] = reset_vector & ~1u;
+    cpu->r[LR] = 0xFFFFFFFFu;
+
+    if (bus_fault(bus)) {
+        cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+        return;
+    }
+    if ((reset_vector & 1u) == 0) {
+        cpu_halt(cpu, "reset vector 0x%08x has Thumb bit clear", reset_vector);
+    }
 }
 
 /*
@@ -52,6 +56,15 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
      */
     (void)bus;
     (void)add_with_carry;
+
+    /* BKPT T1: 1011 1110 imm8 (ARM ARM, BKPT instruction description). */
+    if ((insn & 0xFF00u) == 0xBE00u) {
+        unsigned imm = insn & 0xFFu;
+        cpu->r[PC] = pc;
+        cpu_halt(cpu, "bkpt #%u", imm);
+        return;
+    }
+
     cpu_halt(cpu, "undefined 16-bit instruction 0x%04x at 0x%08x", insn, pc);
 }
 
@@ -68,18 +81,29 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
         return -1;
     }
 
-    /*
-     * TODO(Jeff): fetch and dispatch.
-     *   1. Read the halfword at PC.
-     *   2. Decide whether it is the first half of a 32-bit instruction (ARM ARM A5.1:
-     *      bits [15:11] are 0b11101, 0b11110 or 0b11111). If so, read the second halfword.
-     *   3. Advance PC past the instruction *before* executing it, so branches can overwrite it.
-     *      Careful: an instruction that reads PC as an operand sees (its own address + 4).
-     *   4. Call exec16() or exec32().
-     */
-    (void)exec16;
-    (void)exec32;
-    cpu_halt(cpu, "cpu_step not implemented");
+    uint32_t pc = cpu->r[PC];
+    uint16_t hw1 = bus_read16(bus, pc);
+    if (bus_fault(bus)) {
+        cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+        return -1;
+    }
+
+    /* ARM ARM A5.1: prefixes 11101, 11110 and 11111 start 32-bit instructions. */
+    unsigned prefix = hw1 >> 11;
+    if (prefix == 0x1Du || prefix == 0x1Eu || prefix == 0x1Fu) {
+        uint16_t hw2 = bus_read16(bus, pc + 2u);
+        if (bus_fault(bus)) {
+            cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+            return -1;
+        }
+        cpu->r[PC] = pc + 4u;
+        exec32(cpu, bus, pc, hw1, hw2);
+    } else {
+        cpu->r[PC] = pc + 2u;
+        exec16(cpu, bus, pc, hw1);
+    }
+
+    /* cpu->r[PC] tracks the next instruction. A PC operand uses pc + 4 instead. */
 
     if (bus_fault(bus)) {
         cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
