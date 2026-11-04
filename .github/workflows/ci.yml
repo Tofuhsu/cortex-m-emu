@@ -15,5 +15,3 @@ jobs:
         run: make
       - name: Tests
         run: make test
-        # The CPU is being written instruction by instruction; remove this once all tests pass.
-        continue-on-error: true
