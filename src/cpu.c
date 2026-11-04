@@ -82,6 +82,16 @@ static bool condition_passed(const cpu_t *cpu, unsigned cond)
     }
 }
 
+/* Shared by register branches and stack returns; exception return is not modeled yet. */
+static void write_pc_thumb(cpu_t *cpu, uint32_t target)
+{
+    if ((target & 1u) == 0) {
+        cpu_halt(cpu, "branch target 0x%08x has Thumb bit clear", target);
+        return;
+    }
+    cpu->r[PC] = target & ~1u;
+}
+
 static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 {
     /*
@@ -113,6 +123,14 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         cpu->r[rdn] = result;
         cpu->n = (result >> 31) != 0;
         cpu->z = result == 0;
+        return;
+    }
+
+    /* BX T1: 0100 0111 0 Rm 000. BLX (bit 7 set) is a different instruction. */
+    if ((insn & 0xFF87u) == 0x4700u) {
+        unsigned rm = (insn >> 3) & 0x0Fu;
+        uint32_t target = rm == PC ? pc + 4u : cpu->r[rm];
+        write_pc_thumb(cpu, target);
         return;
     }
 
@@ -174,6 +192,67 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* PUSH T1: 1011 010 M reglist. Lower register numbers use lower addresses. */
+    if ((insn & 0xFE00u) == 0xB400u) {
+        uint32_t registers = insn & 0xFFu;
+        if ((insn & 0x100u) != 0) {
+            registers |= 1u << LR;
+        }
+        unsigned count = 0;
+        for (uint32_t bits = registers; bits != 0; bits >>= 1) {
+            count += bits & 1u;
+        }
+        if (count == 0) {
+            cpu_halt(cpu, "empty PUSH register list");
+            return;
+        }
+        uint32_t address = cpu->r[SP] - 4u * count;
+        cpu->r[SP] = address;
+        for (unsigned r = 0; r <= LR; r++) {
+            if ((registers & (1u << r)) != 0) {
+                bus_write32(bus, address, cpu->r[r]);
+                if (bus_fault(bus)) {
+                    return;
+                }
+                address += 4u;
+            }
+        }
+        return;
+    }
+
+    /* POP T1: 1011 110 P reglist. The optional PC is the last word on the stack. */
+    if ((insn & 0xFE00u) == 0xBC00u) {
+        uint32_t registers = insn & 0xFFu;
+        if ((insn & 0x100u) != 0) {
+            registers |= 1u << PC;
+        }
+        if (registers == 0) {
+            cpu_halt(cpu, "empty POP register list");
+            return;
+        }
+        uint32_t address = cpu->r[SP];
+        uint32_t pc_target = 0;
+        for (unsigned r = 0; r <= PC; r++) {
+            if ((registers & (1u << r)) != 0) {
+                uint32_t value = bus_read32(bus, address);
+                if (bus_fault(bus)) {
+                    return;
+                }
+                if (r == PC) {
+                    pc_target = value;
+                } else {
+                    cpu->r[r] = value;
+                }
+                address += 4u;
+            }
+        }
+        cpu->r[SP] = address;
+        if ((registers & (1u << PC)) != 0) {
+            write_pc_thumb(cpu, pc_target);
+        }
+        return;
+    }
+
     /* B<cond> T1: 1101 cond imm8. 0xDE and 0xDF belong to UDF and SVC. */
     unsigned cond = (insn >> 8) & 0x0Fu;
     if ((insn & 0xF000u) == 0xD000u && cond < 0xEu) {
@@ -201,8 +280,28 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 
 static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
-    /* TODO(Jeff): 32-bit Thumb-2 encodings (ARM ARM A5.3). Start with BL, then ORR/BIC/EOR (modified immediate). */
     (void)bus;
+
+    /* BL T1: 11110 S imm10 / 11 J1 1 J2 imm11. */
+    if ((hw1 & 0xF800u) == 0xF000u && (hw2 & 0xD000u) == 0xD000u) {
+        uint32_t s = (hw1 >> 10) & 1u;
+        uint32_t j1 = (hw2 >> 13) & 1u;
+        uint32_t j2 = (hw2 >> 11) & 1u;
+        uint32_t i1 = 1u ^ (j1 ^ s);
+        uint32_t i2 = 1u ^ (j2 ^ s);
+        uint32_t imm25 = (s << 24) | (i1 << 23) | (i2 << 22)
+                       | ((uint32_t)(hw1 & 0x03FFu) << 12)
+                       | ((uint32_t)(hw2 & 0x07FFu) << 1);
+        int32_t offset = (int32_t)imm25; /* imm25 fits in int32_t. */
+        if (s != 0) {
+            offset -= INT32_C(33554432);
+        }
+        cpu->r[LR] = (pc + 4u) | 1u;
+        cpu->r[PC] = pc + 4u + (uint32_t)offset;
+        return;
+    }
+
+    /* TODO(Jeff): remaining Thumb-2 instructions, including modified-immediate logic. */
     cpu_halt(cpu, "undefined 32-bit instruction 0x%04x%04x at 0x%08x", hw1, hw2, pc);
 }
 
