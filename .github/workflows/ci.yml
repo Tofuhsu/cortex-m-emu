@@ -1,0 +1,19 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM toolchain (assembles the test programs)
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi
+      - name: Build
+        run: make
+      - name: Tests
+        run: make test
+        # The CPU is being written instruction by instruction; remove this once all tests pass.
+        continue-on-error: true
