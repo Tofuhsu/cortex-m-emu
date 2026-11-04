@@ -129,6 +129,51 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* STR/LDR (immediate) T1: 01100/01101 imm5 Rn Rt. */
+    if (opcode == 0x0Cu || opcode == 0x0Du) {
+        unsigned rn = (insn >> 3) & 0x07u;
+        unsigned rt = insn & 0x07u;
+        uint32_t offset = ((insn >> 6) & 0x1Fu) << 2;
+        uint32_t address = cpu->r[rn] + offset;
+        if (opcode == 0x0Du) {
+            uint32_t value = bus_read32(bus, address);
+            if (!bus_fault(bus)) {
+                cpu->r[rt] = value;
+            }
+        } else {
+            bus_write32(bus, address, cpu->r[rt]);
+        }
+        return;
+    }
+
+    /* STR/LDR (immediate) T2, SP-relative: 10010/10011 Rt imm8. */
+    if (opcode == 0x12u || opcode == 0x13u) {
+        unsigned rt = (insn >> 8) & 0x07u;
+        uint32_t offset = (insn & 0xFFu) << 2;
+        uint32_t address = cpu->r[SP] + offset;
+        if (opcode == 0x13u) {
+            uint32_t value = bus_read32(bus, address);
+            if (!bus_fault(bus)) {
+                cpu->r[rt] = value;
+            }
+        } else {
+            bus_write32(bus, address, cpu->r[rt]);
+        }
+        return;
+    }
+
+    /* ADD (SP plus immediate) T2: 1011 0000 0 imm7. Flags unchanged. */
+    if ((insn & 0xFF80u) == 0xB000u) {
+        cpu->r[SP] += (insn & 0x7Fu) << 2;
+        return;
+    }
+
+    /* SUB (SP minus immediate) T1: 1011 0000 1 imm7. Flags unchanged. */
+    if ((insn & 0xFF80u) == 0xB080u) {
+        cpu->r[SP] -= (insn & 0x7Fu) << 2;
+        return;
+    }
+
     /* B<cond> T1: 1101 cond imm8. 0xDE and 0xDF belong to UDF and SVC. */
     unsigned cond = (insn >> 8) & 0x0Fu;
     if ((insn & 0xF000u) == 0xD000u && cond < 0xEu) {
