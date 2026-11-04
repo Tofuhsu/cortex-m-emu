@@ -88,8 +88,6 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
      * TODO(Jeff): decode by the top bits (ARM ARM A5.2, "16-bit Thumb instruction encoding").
      * Start with what tests/progs/ needs, one test at a time.
      */
-    (void)bus;
-
     /* MOVS (immediate) T1: 00100 Rd imm8. IT blocks are not supported yet. */
     if ((insn >> 11) == 0x04u) {
         unsigned rd = (insn >> 8) & 0x07u;
@@ -115,6 +113,19 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         cpu->r[rdn] = result;
         cpu->n = (result >> 31) != 0;
         cpu->z = result == 0;
+        return;
+    }
+
+    /* LDR (literal) T1: 01001 Rt imm8. PC as an operand is this instruction + 4. */
+    if ((insn >> 11) == 0x09u) {
+        unsigned rt = (insn >> 8) & 0x07u;
+        uint32_t offset = (insn & 0xFFu) << 2;
+        uint32_t base = (pc + 4u) & ~3u;
+        uint32_t value = bus_read32(bus, base + offset);
+        if (!bus_fault(bus)) {
+            cpu->r[rt] = value;
+        }
+        /* Flags are unchanged; cpu_step handles any bus fault. */
         return;
     }
 
