@@ -92,6 +92,33 @@ static void write_pc_thumb(cpu_t *cpu, uint32_t target)
     cpu->r[PC] = target & ~1u;
 }
 
+/* Shared scalar transfers. Address calculation belongs to each instruction decoder. */
+static void transfer_memory(cpu_t *cpu, bus_t *bus, unsigned rt, uint32_t address,
+                            unsigned size, bool load)
+{
+    uint32_t value = 0;
+    switch (size) {
+    case 1:
+        if (load) value = bus_read8(bus, address);
+        else bus_write8(bus, address, (uint8_t)cpu->r[rt]);
+        break;
+    case 2:
+        if (load) value = bus_read16(bus, address);
+        else bus_write16(bus, address, (uint16_t)cpu->r[rt]);
+        break;
+    case 4:
+        if (load) value = bus_read32(bus, address);
+        else bus_write32(bus, address, cpu->r[rt]);
+        break;
+    default:
+        cpu_halt(cpu, "unsupported memory transfer width %u", size);
+        return;
+    }
+    if (load && !bus_fault(bus)) {
+        cpu->r[rt] = value;
+    }
+}
+
 static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 {
     /*
@@ -151,11 +178,7 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         unsigned rt = (insn >> 8) & 0x07u;
         uint32_t offset = (insn & 0xFFu) << 2;
         uint32_t base = (pc + 4u) & ~3u;
-        uint32_t value = bus_read32(bus, base + offset);
-        if (!bus_fault(bus)) {
-            cpu->r[rt] = value;
-        }
-        /* Flags are unchanged; cpu_step handles any bus fault. */
+        transfer_memory(cpu, bus, rt, base + offset, 4, true);
         return;
     }
 
@@ -165,14 +188,7 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         unsigned rt = insn & 0x07u;
         uint32_t offset = ((insn >> 6) & 0x1Fu) << 2;
         uint32_t address = cpu->r[rn] + offset;
-        if (opcode == 0x0Du) {
-            uint32_t value = bus_read32(bus, address);
-            if (!bus_fault(bus)) {
-                cpu->r[rt] = value;
-            }
-        } else {
-            bus_write32(bus, address, cpu->r[rt]);
-        }
+        transfer_memory(cpu, bus, rt, address, 4, opcode == 0x0Du);
         return;
     }
 
@@ -181,14 +197,7 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         unsigned rt = (insn >> 8) & 0x07u;
         uint32_t offset = (insn & 0xFFu) << 2;
         uint32_t address = cpu->r[SP] + offset;
-        if (opcode == 0x13u) {
-            uint32_t value = bus_read32(bus, address);
-            if (!bus_fault(bus)) {
-                cpu->r[rt] = value;
-            }
-        } else {
-            bus_write32(bus, address, cpu->r[rt]);
-        }
+        transfer_memory(cpu, bus, rt, address, 4, opcode == 0x13u);
         return;
     }
 
@@ -336,8 +345,6 @@ static bool thumb_expand_imm(uint16_t imm12, bool carry_in, thumb_imm_t *expande
 
 static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
-    (void)bus;
-
     /* BL T1: 11110 S imm10 / 11 J1 1 J2 imm11. */
     if ((hw1 & 0xF800u) == 0xF000u && (hw2 & 0xD000u) == 0xD000u) {
         uint32_t s = (hw1 >> 10) & 1u;
@@ -354,6 +361,27 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         }
         cpu->r[LR] = (pc + 4u) | 1u;
         cpu->r[PC] = pc + 4u + (uint32_t)offset;
+        return;
+    }
+
+    /* STR.W/LDR.W/LDRB.W with an unscaled, unsigned imm12 byte offset. */
+    unsigned memory_op = hw1 & 0xFFF0u;
+    if (memory_op == 0xF8C0u || memory_op == 0xF8D0u || memory_op == 0xF890u) {
+        unsigned rn = hw1 & 0x0Fu;
+        unsigned rt = (hw2 >> 12) & 0x0Fu;
+        uint32_t offset = hw2 & 0x0FFFu;
+        if (rn == PC || rt == PC) {
+            cpu_halt(cpu, "wide load/store with PC not implemented at 0x%08x", pc);
+            return;
+        }
+        if (memory_op == 0xF890u && rt == SP) {
+            cpu_halt(cpu, "UNPREDICTABLE LDRB.W Rt=SP at 0x%08x", pc);
+            return;
+        }
+        uint32_t address = cpu->r[rn] + offset;
+        unsigned size = memory_op == 0xF890u ? 1u : 4u;
+        bool load = memory_op != 0xF8C0u;
+        transfer_memory(cpu, bus, rt, address, size, load);
         return;
     }
 
