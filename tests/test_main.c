@@ -207,6 +207,37 @@ static void test_gpio(void)
     rcc_free(rcc);
 }
 
+/*
+ * SVC exception entry and return (ARMv7-M ARM B1.5.6, B1.5.8). Single-stepped in
+ * Renode 1.17 on 2026-11-04. Exception entry is not an instruction, so it is not a
+ * step: 15 instructions + BKPT. The stacked LR is the reset LR, so it differs from
+ * Renode (0) for the same reason as test_reset.
+ */
+static void test_svc(void)
+{
+    cpu_t cpu;
+    bus_t *bus = run("12_svc", &cpu);
+    CHECK_REG(&cpu, 0, 42);      /* changed through the stacked frame */
+    CHECK_REG(&cpu, 1, 2);
+    CHECK_REG(&cpu, 2, 3);       /* restored by unstacking */
+    CHECK_REG(&cpu, 3, 4);
+    check("SP after return", cpu.r[SP], 0x20020000);
+    check("LR after return", cpu.r[LR], 0xFFFFFFFF);
+    check("steps", (uint32_t)cpu.steps, 16);
+    check("IPSR in handler", bus_read32(bus, 0x20000000), 11);
+    check("EXC_RETURN", bus_read32(bus, 0x20000004), 0xFFFFFFF9);
+    check("SP in handler", bus_read32(bus, 0x20000008), 0x2001FFE0);
+    check("stacked r0", bus_read32(bus, 0x2001FFE0), 42);
+    check("stacked r1", bus_read32(bus, 0x2001FFE4), 2);
+    check("stacked r2", bus_read32(bus, 0x2001FFE8), 3);
+    check("stacked r3", bus_read32(bus, 0x2001FFEC), 4);
+    check("stacked r12", bus_read32(bus, 0x2001FFF0), 0);
+    check("stacked LR", bus_read32(bus, 0x2001FFF4), 0xFFFFFFFF);
+    check("stacked return address", bus_read32(bus, 0x2001FFF8), 0x0800004A);
+    check("stacked xPSR", bus_read32(bus, 0x2001FFFC), 0x01000000);
+    bus_free(bus);
+}
+
 static void test_bus_rejects_flash_write(void)
 {
     bus_t *bus = bus_new();
@@ -250,6 +281,7 @@ int main(void)
     RUN(test_thumb2_logic);
     RUN(test_wide_load_store);
     RUN(test_gpio);
+    RUN(test_svc);
     printf("\n%d/%d passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
 }
