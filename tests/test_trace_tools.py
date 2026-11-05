@@ -1,11 +1,18 @@
 import importlib.util
+import json
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
 SPEC = importlib.util.spec_from_file_location('compare_traces', Path(__file__).resolve().parents[1] / 'tools/compare_traces.py')
 trace = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(trace)
+sys.modules['compare_traces'] = trace
+MATRIX_SPEC = importlib.util.spec_from_file_location('run_trace_matrix',
+    Path(__file__).resolve().parents[1] / 'tools/run_trace_matrix.py')
+matrix = importlib.util.module_from_spec(MATRIX_SPEC)
+MATRIX_SPEC.loader.exec_module(matrix)
 
 
 def fixture():
@@ -51,6 +58,38 @@ class Traces(unittest.TestCase):
             self.assertEqual(len(trace.read_trace(p)), 1)
             p.write_text(p.read_text() + ','.join(str(v) for v in fixture()[0].values()) + '\n')
             with self.assertRaises(ValueError): trace.read_trace(p)
+
+    def test_reset_only_checks_still_detect_wrong_sp_and_flags(self):
+        a, b = fixture()[0], fixture()[0]
+        a['r14'] = 0xFFFFFFFF
+        rule = dict(field='r14', first_step=0, last_step=0,
+                    emu=0xFFFFFFFF, renode=0, reason='reset')
+        mismatches, allowed = matrix.compare_reset(a, b, [rule])
+        self.assertEqual(mismatches, [])
+        self.assertEqual(len(allowed), 1)
+        b['r13'] = 4
+        b['xpsr'] ^= 1 << 29
+        mismatches, _ = matrix.compare_reset(a, b, [rule])
+        self.assertEqual([item[1] for item in mismatches], ['r13', 'xpsr'])
+        self.assertTrue(all(item[0] == 0 for item in mismatches))
+
+    def test_prefixes_cannot_silently_remove_cases_or_boundaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'prefixes.json'
+            accepted = {'13_systick': {'steps': 10, 'reason': 'before first asynchronous entry'}}
+            path.write_text(json.dumps(accepted))
+            self.assertEqual(matrix.load_prefixes(path, {'13_systick'}), accepted)
+            for invalid in [
+                {'unknown': {'steps': 10, 'reason': 'unknown program'}},
+                {'01_reset': {'steps': 1, 'reason': 'must not invent an executed instruction'}},
+                {'13_systick': {'steps': 0, 'reason': 'empty prefix'}},
+                {'13_systick': {'steps': True, 'reason': 'bool is not a count'}},
+                {'13_systick': {'steps': 10, 'reason': ' '}},
+                {'13_systick': {'steps': 10, 'reason': 'no extra allowlist', 'ignore': 'xpsr'}},
+            ]:
+                path.write_text(json.dumps(invalid))
+                with self.assertRaises(ValueError):
+                    matrix.load_prefixes(path, {'13_systick', '01_reset'})
 
 
 if __name__ == '__main__': unittest.main()

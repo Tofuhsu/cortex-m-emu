@@ -1,0 +1,5 @@
+{
+  "13_systick": {"steps": 106, "reason": "before the first SysTick entry: the emulator ticks once per instruction, Renode uses virtual time"},
+  "15_primask": {"steps": 52, "reason": "before the first SysTick entry: same timer time base difference as 13"},
+  "19_nvic_swpend": {"steps": 4, "reason": "before IRQ entry: Renode records entry in the step of the ISPR store, the emulator in the step of the first handler instruction; states agree again from step 6"}
+}
