@@ -513,6 +513,25 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* Load/store (register) T1: 0101 opB Rm Rn Rt, address = Rn + Rm.
+     * opB: STR, STRH, STRB, LDRSB, LDR, LDRH, LDRB, LDRSH. No shift in T1.
+     */
+    if ((insn & 0xF000u) == 0x5000u) {
+        unsigned op = (insn >> 9) & 0x07u;
+        unsigned rm = (insn >> 6) & 0x07u;
+        unsigned rn = (insn >> 3) & 0x07u;
+        unsigned rt = insn & 0x07u;
+        uint32_t address = cpu->r[rn] + cpu->r[rm];
+        static const unsigned sizes[8] = {4, 2, 1, 1, 4, 2, 1, 2};
+        bool load = op >= 3u;
+        transfer_memory(cpu, bus, rt, address, sizes[op], load);
+        if (!bus_fault(bus)) {
+            if (op == 3u) cpu->r[rt] = (uint32_t)(int32_t)(int8_t)(uint8_t)cpu->r[rt];
+            if (op == 7u) cpu->r[rt] = (uint32_t)(int32_t)(int16_t)(uint16_t)cpu->r[rt];
+        }
+        return;
+    }
+
     /* STR/LDR (immediate) T2, SP-relative: 10010/10011 Rt imm8. */
     if (opcode == 0x12u || opcode == 0x13u) {
         unsigned rt = (insn >> 8) & 0x07u;
@@ -836,9 +855,11 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         return;
     }
 
-    /* STR.W/LDR.W/LDRB.W with an unscaled, unsigned imm12 byte offset. */
+    /* STR.W/LDR.W, STRB.W/LDRB.W, STRH.W/LDRH.W with an unscaled, unsigned
+     * imm12 byte offset: 1111 1000 1 size L Rn / Rt imm12. */
     unsigned memory_op = hw1 & 0xFFF0u;
-    if (memory_op == 0xF8C0u || memory_op == 0xF8D0u || memory_op == 0xF890u) {
+    if (memory_op == 0xF8C0u || memory_op == 0xF8D0u || memory_op == 0xF880u ||
+        memory_op == 0xF890u || memory_op == 0xF8A0u || memory_op == 0xF8B0u) {
         unsigned rn = hw1 & 0x0Fu;
         unsigned rt = (hw2 >> 12) & 0x0Fu;
         uint32_t offset = hw2 & 0x0FFFu;
@@ -846,14 +867,48 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
             cpu_halt(cpu, "wide load/store with PC not implemented at 0x%08x", pc);
             return;
         }
-        if (memory_op == 0xF890u && rt == SP) {
-            cpu_halt(cpu, "UNPREDICTABLE LDRB.W Rt=SP at 0x%08x", pc);
+        unsigned size = (memory_op & 0x0060u) == 0x0040u ? 4u : (memory_op & 0x0020u) ? 2u : 1u;
+        bool load = (memory_op & 0x0010u) != 0;
+        if (size != 4u && rt == SP) {
+            cpu_halt(cpu, "UNPREDICTABLE byte/halfword load/store Rt=SP at 0x%08x", pc);
             return;
         }
         uint32_t address = cpu->r[rn] + offset;
-        unsigned size = memory_op == 0xF890u ? 1u : 4u;
-        bool load = memory_op != 0xF8C0u;
         transfer_memory(cpu, bus, rt, address, size, load);
+        return;
+    }
+
+    /* STR/LDR, STRB/LDRB, STRH/LDRH (immediate) with an 8-bit offset (the T4/T3
+     * encodings): 1111 1000 0 size L Rn / Rt 1 P U W imm8. Covers negative
+     * offsets, pre-index and post-index with writeback. LDR literal (Rn = PC)
+     * is decoded above.
+     */
+    if ((memory_op == 0xF800u || memory_op == 0xF810u || memory_op == 0xF820u ||
+         memory_op == 0xF830u || memory_op == 0xF840u || memory_op == 0xF850u) &&
+        (hw2 & 0x0800u) != 0) {
+        unsigned rn = hw1 & 0x0Fu;
+        unsigned rt = (hw2 >> 12) & 0x0Fu;
+        bool index = (hw2 & 0x0400u) != 0, add = (hw2 & 0x0200u) != 0;
+        bool wback = (hw2 & 0x0100u) != 0;
+        bool load = (hw1 & 0x0010u) != 0;
+        unsigned size = (hw1 & 0x0040u) ? 4u : (hw1 & 0x0020u) ? 2u : 1u;
+        uint32_t imm8 = hw2 & 0xFFu;
+        if (!index && !wback) {
+            cpu_halt(cpu, "UNDEFINED load/store imm8 P=0 W=0 at 0x%08x", pc);
+            return;
+        }
+        if (index && add && !wback) {
+            cpu_halt(cpu, "unprivileged LDRT/STRT not implemented at 0x%08x", pc);
+            return;
+        }
+        if (rn == PC || rt == PC || (size != 4u && rt == SP) || (wback && rn == rt)) {
+            cpu_halt(cpu, "load/store imm8 with this Rn/Rt not implemented at 0x%08x", pc);
+            return;
+        }
+        uint32_t offset_address = add ? cpu->r[rn] + imm8 : cpu->r[rn] - imm8;
+        uint32_t address = index ? offset_address : cpu->r[rn];
+        transfer_memory(cpu, bus, rt, address, size, load);
+        if (wback && !bus_fault(bus)) cpu->r[rn] = offset_address;
         return;
     }
 

@@ -335,9 +335,10 @@ static void test_programs(void)
     const char *names[] = {
         "24_add_register", "25_data_processing", "26_immediate_shifts", "27_uxtb",
         "28_modified_arithmetic", "29_wide_conditional_branch", "30_register_lsr",
-        "31_multiply", "32_unsigned_divide", "33_wide_literal"
+        "31_multiply", "32_unsigned_divide", "33_wide_literal",
+        "34_load_store_imm8", "35_load_store_register"
     };
-    const unsigned expected_flags[] = {6, 9, 2, 6, 2, 6, 8, 6, 6, 4};
+    const unsigned expected_flags[] = {6, 9, 2, 6, 2, 6, 8, 6, 6, 4, 4, 0};
     for (unsigned i = 0; i < sizeof names / sizeof names[0]; ++i) {
         char path[160]; snprintf(path, sizeof path, "build/progs/%s.bin", names[i]);
         bus_t *bus = bus_new(); cpu_t cpu;
@@ -375,6 +376,15 @@ static void test_programs(void)
         case 9:
             check_register(&cpu, 0, 0x12345678); check_register(&cpu, 1, 0xABCDEF00);
             check_register(&cpu, 2, 0); break;
+        case 10:
+            check_register(&cpu, 0, 0x20000100); check_register(&cpu, 2, 0xBB);
+            check_register(&cpu, 3, 0xAABB); check_register(&cpu, 4, 0xBB);
+            check_register(&cpu, 5, 0x8899AABB); check_register(&cpu, 6, 0xBB);
+            check_register(&cpu, 7, 0xAABB); break;
+        case 11:
+            check_register(&cpu, 3, 0x8899AABB); check_register(&cpu, 4, 0xAABB);
+            check_register(&cpu, 5, 0xFFFFAABB); check_register(&cpu, 6, 0xBB);
+            check_register(&cpu, 7, 0xFFFFFFBB); break;
         }
         printf("PASS assembled program %s (%llu instructions)\n", names[i],
                (unsigned long long)cpu.steps);
