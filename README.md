@@ -3,7 +3,7 @@
 An instruction-set emulator for the Arm Cortex-M4 (ARMv7-M, Thumb/Thumb-2), written in C11.
 Goal: run my own bare-metal STM32F446 firmware (a separate project, not yet public) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
 
-**Status:** Week 3 of 5. The CPU core passes all 17 test programs and runs my STM32F446 blink firmware (`-O0` build) with RCC and GPIOA models. PA5 toggles every 3,500,022–3,500,024 instructions, matching the count from the disassembly (7-instruction delay loop × 500,000 iterations plus call overhead). Counts are instructions, not time.
+**Status:** Week 3 of 5. The CPU core passes all 17 test programs and runs my STM32F446 blink firmware (`-O0` build). The first, busy-wait version of that firmware toggled PA5 every 3,500,022–3,500,024 instructions with RCC and GPIOA models, matching the count from the disassembly (7-instruction delay loop × 500,000 iterations plus call overhead). Counts are instructions, not time.
 
 The Week 3 implementation adds IPSR, MRS (IPSR and PRIMASK), SVC exception entry, exception return, SysTick with pending exceptions, CPSID/CPSIE for PRIMASK, and a USART2 TX model. The firmware now blinks from SysTick: PA5 toggles every 7,999,995–8,000,004 instructions with RVR = 15999 and 500 ticks. The boot banner over USART2 is the next milestone.
 
