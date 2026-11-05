@@ -16,6 +16,7 @@
 #include "periph/gpio.h"
 #include "periph/rcc.h"
 #include "periph/systick.h"
+#include "periph/usart.h"
 
 static void dump_registers(const cpu_t *cpu)
 {
@@ -55,6 +56,14 @@ static void pend_systick(void *ctx)
     cpu_pend_exception(ctx, CPU_EXCEPTION_SYSTICK);
 }
 
+/* USART2 bytes that reach PA2 go to stdout unchanged. */
+static void print_usart_byte(void *ctx, uint8_t byte)
+{
+    (void)ctx;
+    putchar(byte);
+    fflush(stdout);
+}
+
 int main(int argc, char **argv)
 {
     unsigned long long max_steps = 1000000;
@@ -86,11 +95,14 @@ int main(int argc, char **argv)
     rcc_t *rcc = rcc_new();
     gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
     systick_t *systick = systick_new(pend_systick, &cpu);
-    if (!rcc || !gpioa || !systick || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
+    usart_t *usart2 = usart_new(rcc, gpioa);
+    if (!rcc || !gpioa || !systick || !usart2 || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
         bus_add_periph(bus, gpio_as_periph(gpioa)) != 0 ||
-        bus_add_periph(bus, systick_as_periph(systick)) != 0) {
-        fprintf(stderr, "cannot initialize RCC/GPIOA/SysTick models\n");
+        bus_add_periph(bus, systick_as_periph(systick)) != 0 ||
+        bus_add_periph(bus, usart_as_periph(usart2)) != 0) {
+        fprintf(stderr, "cannot initialize RCC/GPIOA/SysTick/USART2 models\n");
         bus_free(bus);
+        usart_free(usart2);
         systick_free(systick);
         gpio_free(gpioa);
         rcc_free(rcc);
@@ -103,6 +115,7 @@ int main(int argc, char **argv)
         cpu_set_trace_hook(&cpu, trace_instruction, NULL);
     }
     gpio_set_observer(gpioa, observe_pa5, &cpu);
+    usart_set_tx_observer(usart2, print_usart_byte, NULL);
     while (!cpu.halted && cpu.steps < max_steps) {
         cpu_step(&cpu, bus);
     }
@@ -117,14 +130,27 @@ int main(int argc, char **argv)
         printf("note: %llu GPIOA writes ignored while clock disabled\n",
                (unsigned long long)gpio_gated_write_count(gpioa));
     }
+    usart_stats_t us = usart_get_stats(usart2);
+    if (us.clock_gated_writes || us.ue_disabled_dr_writes || us.te_disabled_dr_writes ||
+        us.pin_mismatch_bytes) {
+        printf("note: USART2 bytes not sent: clock off=%llu UE off=%llu TE off=%llu"
+               " PA2 not AF7=%llu\n",
+               (unsigned long long)us.clock_gated_writes,
+               (unsigned long long)us.ue_disabled_dr_writes,
+               (unsigned long long)us.te_disabled_dr_writes,
+               (unsigned long long)us.pin_mismatch_bytes);
+    }
     if (rcc_bad_access_count(rcc) || gpio_bad_access_count(gpioa) ||
-        systick_bad_access_count(systick)) {
-        printf("note: unsupported/invalid peripheral accesses: RCC=%llu GPIOA=%llu SysTick=%llu\n",
+        systick_bad_access_count(systick) || us.bad_accesses) {
+        printf("note: unsupported/invalid peripheral accesses: RCC=%llu GPIOA=%llu"
+               " SysTick=%llu USART2=%llu\n",
                (unsigned long long)rcc_bad_access_count(rcc),
                (unsigned long long)gpio_bad_access_count(gpioa),
-               (unsigned long long)systick_bad_access_count(systick));
+               (unsigned long long)systick_bad_access_count(systick),
+               (unsigned long long)us.bad_accesses);
     }
     bus_free(bus);
+    usart_free(usart2);
     systick_free(systick);
     gpio_free(gpioa);
     rcc_free(rcc);

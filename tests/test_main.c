@@ -18,6 +18,7 @@
 #include "periph/gpio.h"
 #include "periph/rcc.h"
 #include "periph/systick.h"
+#include "periph/usart.h"
 
 #define MAX_STEPS 1000
 
@@ -366,6 +367,94 @@ static void test_primask(void)
     systick_free(st);
 }
 
+/* Collects bytes the USART2 model routes to PA2. */
+typedef struct {
+    uint8_t bytes[16];
+    unsigned count;
+} tx_capture_t;
+
+static void capture_tx(void *ctx, uint8_t byte)
+{
+    tx_capture_t *cap = ctx;
+    if (cap->count < sizeof cap->bytes) {
+        cap->bytes[cap->count] = byte;
+    }
+    cap->count++;
+}
+
+/* Run a USART2 program on RCC + GPIOA + USART2 models; return the stats. */
+static usart_stats_t run_usart(const char *name, cpu_t *cpu, tx_capture_t *cap)
+{
+    usart_stats_t stats = {0};
+    bus_t *bus = bus_new();
+    rcc_t *rcc = rcc_new();
+    gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
+    usart_t *usart = usart_new(rcc, gpioa);
+    if (!bus || !rcc || !gpioa || !usart || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
+        bus_add_periph(bus, gpio_as_periph(gpioa)) != 0 ||
+        bus_add_periph(bus, usart_as_periph(usart)) != 0) {
+        printf("    cannot set up RCC/GPIOA/USART2 models\n");
+        test_ok = 0;
+    } else {
+        usart_set_tx_observer(usart, capture_tx, cap);
+        run_on(bus, name, cpu);
+        stats = usart_get_stats(usart);
+        check("BRR", usart_peek(usart, USART_BRR_OFFSET), 0x8B);
+        check("unmapped accesses", bus_unmapped_count(bus), 0);
+        check("RCC/GPIO bad accesses",
+              (uint32_t)(rcc_bad_access_count(rcc) + gpio_bad_access_count(gpioa)), 0);
+    }
+    usart_free(usart);
+    bus_free(bus);
+    gpio_free(gpioa);
+    rcc_free(rcc);
+    return stats;
+}
+
+/*
+ * USART2 transmit of "OK\n" (RM0390 USART chapter; PA2 = AF7 per DS10693). TX
+ * completes at once in this model, so every TXE/TC poll passes the first time:
+ * 20 setup + 3 x (2 + 6 putc) + 4 TC poll + 2 reads + BKPT = 51 steps.
+ * Single-stepped in Renode 1.17 on 2026-11-05: BKPT after 50 steps, SR = 0xC0,
+ * CR1 = 0x2008, and USART2 output 4f 4b 0a.
+ */
+static void test_usart(void)
+{
+    cpu_t cpu;
+    tx_capture_t cap = {0};
+    usart_stats_t st = run_usart("16_usart", &cpu, &cap);
+    check("bytes sent", cap.count, 3);
+    check("byte 0", cap.bytes[0], 'O');
+    check("byte 1", cap.bytes[1], 'K');
+    check("byte 2", cap.bytes[2], '\n');
+    check("final SR", cpu.r[6], 0xC0);
+    check("CR1 read back", cpu.r[7], 0x2008);
+    check("steps", (uint32_t)cpu.steps, 51);
+    check("clock-gated writes", (uint32_t)st.clock_gated_writes, 0);
+    check("UE-off DR writes", (uint32_t)st.ue_disabled_dr_writes, 0);
+    check("TE-off DR writes", (uint32_t)st.te_disabled_dr_writes, 0);
+    check("pin mismatch bytes", (uint32_t)st.pin_mismatch_bytes, 0);
+    check("USART bad accesses", (uint32_t)st.bad_accesses, 0);
+}
+
+/*
+ * PA2 left at AF0: the USART completes all three transfers (same 48-step flow
+ * as test_usart without the 3 AFRL instructions), but no byte reaches the pin.
+ * This is an emulator policy. Renode 1.17 (2026-11-05) reaches BKPT after the same
+ * 47 steps with SR = 0xC0, but still outputs 4f 4b 0a: it ignores the pin mux.
+ */
+static void test_usart_no_af(void)
+{
+    cpu_t cpu;
+    tx_capture_t cap = {0};
+    usart_stats_t st = run_usart("17_usart_no_af", &cpu, &cap);
+    check("bytes sent", cap.count, 0);
+    check("pin mismatch bytes", (uint32_t)st.pin_mismatch_bytes, 3);
+    check("final SR", cpu.r[6], 0xC0);
+    check("steps", (uint32_t)cpu.steps, 48);
+    check("USART bad accesses", (uint32_t)st.bad_accesses, 0);
+}
+
 static void test_bus_rejects_flash_write(void)
 {
     bus_t *bus = bus_new();
@@ -413,6 +502,8 @@ int main(void)
     RUN(test_svc_align);
     RUN(test_systick);
     RUN(test_primask);
+    RUN(test_usart);
+    RUN(test_usart_no_af);
     printf("\n%d/%d passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
 }
