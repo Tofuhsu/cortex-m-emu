@@ -4,6 +4,7 @@
  *   cortex-m-emu [-n max_steps] [-t] firmware.bin
  *     -n  stop after this many instructions (default 1000000)
  *     -t  print each instruction's address and first halfword before it executes
+ *         (after any pending exception has been taken, so it shows what really runs)
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,7 @@
 #include "loader.h"
 #include "periph/gpio.h"
 #include "periph/rcc.h"
+#include "periph/systick.h"
 
 static void dump_registers(const cpu_t *cpu)
 {
@@ -34,6 +36,23 @@ static void observe_pa5(void *ctx, const char *name,
         printf("PA5 -> %u at step %llu\n", (unsigned)((new_odr >> 5) & 1u),
                (unsigned long long)(cpu->steps + 1u));
     }
+}
+
+static void trace_instruction(void *ctx, uint32_t pc, uint16_t first_halfword)
+{
+    (void)ctx;
+    printf("%08x: %04x\n", pc, first_halfword);
+}
+
+/* SysTick counts executed instructions: one tick after each step (not clock cycles). */
+static void tick_systick(void *ctx)
+{
+    systick_tick(ctx);
+}
+
+static void pend_systick(void *ctx)
+{
+    cpu_pend_exception(ctx, CPU_EXCEPTION_SYSTICK);
 }
 
 int main(int argc, char **argv)
@@ -63,24 +82,28 @@ int main(int argc, char **argv)
         return 1;
     }
 
+    cpu_t cpu;
     rcc_t *rcc = rcc_new();
     gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
-    if (!rcc || !gpioa || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
-        bus_add_periph(bus, gpio_as_periph(gpioa)) != 0) {
-        fprintf(stderr, "cannot initialize RCC/GPIOA models\n");
+    systick_t *systick = systick_new(pend_systick, &cpu);
+    if (!rcc || !gpioa || !systick || bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
+        bus_add_periph(bus, gpio_as_periph(gpioa)) != 0 ||
+        bus_add_periph(bus, systick_as_periph(systick)) != 0) {
+        fprintf(stderr, "cannot initialize RCC/GPIOA/SysTick models\n");
         bus_free(bus);
+        systick_free(systick);
         gpio_free(gpioa);
         rcc_free(rcc);
         return 1;
     }
 
-    cpu_t cpu;
-    cpu_reset(&cpu, bus);
+    cpu_reset(&cpu, bus); /* clears hooks, so install them after */
+    cpu_set_step_hook(&cpu, tick_systick, systick);
+    if (trace) {
+        cpu_set_trace_hook(&cpu, trace_instruction, NULL);
+    }
     gpio_set_observer(gpioa, observe_pa5, &cpu);
     while (!cpu.halted && cpu.steps < max_steps) {
-        if (trace) {
-            printf("%08x: %04x\n", cpu.r[PC], bus_read16(bus, cpu.r[PC]));
-        }
         cpu_step(&cpu, bus);
     }
 
@@ -94,12 +117,15 @@ int main(int argc, char **argv)
         printf("note: %llu GPIOA writes ignored while clock disabled\n",
                (unsigned long long)gpio_gated_write_count(gpioa));
     }
-    if (rcc_bad_access_count(rcc) || gpio_bad_access_count(gpioa)) {
-        printf("note: unsupported/invalid peripheral accesses: RCC=%llu GPIOA=%llu\n",
+    if (rcc_bad_access_count(rcc) || gpio_bad_access_count(gpioa) ||
+        systick_bad_access_count(systick)) {
+        printf("note: unsupported/invalid peripheral accesses: RCC=%llu GPIOA=%llu SysTick=%llu\n",
                (unsigned long long)rcc_bad_access_count(rcc),
-               (unsigned long long)gpio_bad_access_count(gpioa));
+               (unsigned long long)gpio_bad_access_count(gpioa),
+               (unsigned long long)systick_bad_access_count(systick));
     }
     bus_free(bus);
+    systick_free(systick);
     gpio_free(gpioa);
     rcc_free(rcc);
     return 0;

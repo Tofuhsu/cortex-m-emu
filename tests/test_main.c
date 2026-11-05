@@ -17,6 +17,7 @@
 #include "loader.h"
 #include "periph/gpio.h"
 #include "periph/rcc.h"
+#include "periph/systick.h"
 
 #define MAX_STEPS 1000
 
@@ -33,8 +34,12 @@ static void check(const char *what, uint32_t actual, uint32_t expected)
 #define CHECK_REG(cpu, n, value) check("r" #n, (cpu)->r[n], (value))
 #define CHECK_FLAG(cpu, f, value) check("flag " #f, (cpu)->f, (value))
 
-/* Load build/progs/<name>.bin into bus, reset, run to BKPT. */
-static void run_on(bus_t *bus, const char *name, cpu_t *cpu)
+typedef void (*after_reset_fn)(cpu_t *cpu, void *ctx);
+
+/* Load build/progs/<name>.bin into bus, reset, call after_reset (if any), run to BKPT.
+ * Hooks must be installed in after_reset, because cpu_reset() clears them. */
+static void run_hooked(bus_t *bus, const char *name, cpu_t *cpu,
+                       after_reset_fn after_reset, void *ctx)
 {
     char path[256];
     snprintf(path, sizeof path, "build/progs/%s.bin", name);
@@ -45,6 +50,9 @@ static void run_on(bus_t *bus, const char *name, cpu_t *cpu)
         return;
     }
     cpu_reset(cpu, bus);
+    if (after_reset) {
+        after_reset(cpu, ctx);
+    }
     while (!cpu->halted && cpu->steps < MAX_STEPS) {
         cpu_step(cpu, bus);
     }
@@ -55,6 +63,11 @@ static void run_on(bus_t *bus, const char *name, cpu_t *cpu)
         printf("    halted early: %s\n", cpu->halt_reason);
         test_ok = 0;
     }
+}
+
+static void run_on(bus_t *bus, const char *name, cpu_t *cpu)
+{
+    run_hooked(bus, name, cpu, NULL, NULL);
 }
 
 /* Same as run_on() on a bus with no peripheral models. Returns the bus for memory checks. */
@@ -238,6 +251,85 @@ static void test_svc(void)
     bus_free(bus);
 }
 
+/*
+ * SVC with SP = 4 mod 8 (ARMv7-M ARM B1.5.7): the frame is aligned down to 8 bytes,
+ * bit 9 of the stacked xPSR records the 4 padding bytes, and return adds them back.
+ * 4 + 6 handler + 3 instructions = 13 steps. Single-stepped in Renode 1.17 on
+ * 2026-11-04: frame base, stacked xPSR and SP after return match.
+ */
+static void test_svc_align(void)
+{
+    cpu_t cpu;
+    bus_t *bus = run("14_svc_align", &cpu);
+    check("SP before SVC", cpu.r[5], 0x2001FFFC);
+    check("SP after return", cpu.r[6], 0x2001FFFC);
+    check("SP at end", cpu.r[SP], 0x20020000);
+    check("frame base", bus_read32(bus, 0x20000000), 0x2001FFD8);
+    check("stacked xPSR (bit 9 set)", bus_read32(bus, 0x20000004), 0x41000200); /* Z from MOVS */
+    check("stacked return address", bus_read32(bus, 0x2001FFF0), 0x08000048);
+    check("steps", (uint32_t)cpu.steps, 13);
+    bus_free(bus);
+}
+
+/* SysTick wiring for tests: the model ticks once after each executed instruction. */
+static void systick_pend(void *ctx)
+{
+    cpu_pend_exception(ctx, CPU_EXCEPTION_SYSTICK);
+}
+
+static void systick_step(void *ctx)
+{
+    systick_tick(ctx);
+}
+
+static void systick_hooks(cpu_t *cpu, void *ctx)
+{
+    cpu_set_step_hook(cpu, systick_step, ctx);
+}
+
+/*
+ * SysTick interrupt, counted in instructions (one tick per executed instruction;
+ * this is a model choice, not clock cycles). The enable write is step 7; the tick
+ * after it loads RVR = 99, and 99 more ticks reach 0 after step 106, a CMP. So the
+ * first entry stacks the BNE at 0x08000050, which has not run yet, and the handler
+ * starts at step 107. Period RVR + 1 = 100: later events after steps 206 and 306.
+ * Handler: 11 instructions on the first entry, 4 on the others. Total 317 steps.
+ *
+ * Single-stepped in Renode 1.17 on 2026-11-04: it reaches BKPT with r4 = 3, IPSR = 15,
+ * EXC_RETURN = 0xFFFFFFF9, and COUNTFLAG is set on the first CSR read and clear on
+ * the second. Two differences, where these checks follow this model:
+ *   - Renode's SysTick follows its virtual time, not instructions: BKPT is reached
+ *     at step 430, not 317. Step counts and the CVR value are this model's.
+ *   - Renode reads CLKSOURCE (CSR bit 2) as 1 after the program writes CSR = 0,
+ *     so its r6/r7 are 0x00010004/0x4. This model stores the written bit.
+ */
+static void test_systick(void)
+{
+    cpu_t cpu;
+    bus_t *bus = bus_new();
+    systick_t *st = systick_new(systick_pend, &cpu);
+    if (!bus || !st || bus_add_periph(bus, systick_as_periph(st)) != 0) {
+        printf("    cannot set up SysTick model\n");
+        test_ok = 0;
+    } else {
+        run_hooked(bus, "13_systick", &cpu, systick_hooks, st);
+        CHECK_REG(&cpu, 4, 3);
+        check("CSR with COUNTFLAG", cpu.r[6], 0x00010000);
+        check("CSR after read-to-clear", cpu.r[7], 0);
+        check("SP", cpu.r[SP], 0x20020000);
+        check("steps", (uint32_t)cpu.steps, 317);
+        check("IPSR in handler", bus_read32(bus, 0x20000000), 15);
+        check("EXC_RETURN", bus_read32(bus, 0x20000004), 0xFFFFFFF9);
+        check("first return address", bus_read32(bus, 0x20000008), 0x08000050);
+        check("CVR at end", systick_peek(st, SYSTICK_CVR_OFFSET), 93);
+        check("nothing pending", cpu_exception_pending(&cpu, CPU_EXCEPTION_SYSTICK), 0);
+        check("bad accesses", (uint32_t)systick_bad_access_count(st), 0);
+        check("unmapped accesses", bus_unmapped_count(bus), 0);
+    }
+    bus_free(bus);
+    systick_free(st);
+}
+
 static void test_bus_rejects_flash_write(void)
 {
     bus_t *bus = bus_new();
@@ -282,6 +374,8 @@ int main(void)
     RUN(test_wide_load_store);
     RUN(test_gpio);
     RUN(test_svc);
+    RUN(test_svc_align);
+    RUN(test_systick);
     printf("\n%d/%d passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
 }
