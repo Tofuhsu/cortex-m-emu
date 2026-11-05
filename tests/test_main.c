@@ -330,6 +330,42 @@ static void test_systick(void)
     systick_free(st);
 }
 
+/*
+ * PRIMASK (ARMv7-M ARM B1.4.3; CPS and MRS in B5.2). CPSID i is step 1. The enable
+ * write is step 8; with RVR = 9, events follow steps 17, 27, 37 and 47 while
+ * PRIMASK = 1, and they coalesce into one pending SysTick. CPSIE i is step 52, so
+ * the handler starts at step 53 and stacks the NOP after CPSIE (0x0800005E). The
+ * handler stops SysTick first; 7 handler instructions; BKPT is step 62.
+ *
+ * Single-stepped in Renode 1.17 on 2026-11-04: the same PC at every step from 49
+ * to 61, including entry right after CPSIE, and the same registers and stacked
+ * return address. (Its SysTick runs on virtual time, but events still fall inside
+ * the masked loop.) The CVR value is this model's.
+ */
+static void test_primask(void)
+{
+    cpu_t cpu;
+    bus_t *bus = bus_new();
+    systick_t *st = systick_new(systick_pend, &cpu);
+    if (!bus || !st || bus_add_periph(bus, systick_as_periph(st)) != 0) {
+        printf("    cannot set up SysTick model\n");
+        test_ok = 0;
+    } else {
+        run_hooked(bus, "15_primask", &cpu, systick_hooks, st);
+        check("handler runs while masked", cpu.r[7], 0);
+        check("PRIMASK after CPSID", cpu.r[6], 1);
+        check("PRIMASK after CPSIE", cpu.r[3], 0);
+        CHECK_REG(&cpu, 4, 1); /* coalesced: one entry */
+        check("stacked return address", bus_read32(bus, 0x20000000), 0x0800005E);
+        check("SP", cpu.r[SP], 0x20020000);
+        check("steps", (uint32_t)cpu.steps, 62);
+        check("CVR at end", systick_peek(st, SYSTICK_CVR_OFFSET), 4);
+        check("nothing pending", cpu_exception_pending(&cpu, CPU_EXCEPTION_SYSTICK), 0);
+    }
+    bus_free(bus);
+    systick_free(st);
+}
+
 static void test_bus_rejects_flash_write(void)
 {
     bus_t *bus = bus_new();
@@ -376,6 +412,7 @@ int main(void)
     RUN(test_svc);
     RUN(test_svc_align);
     RUN(test_systick);
+    RUN(test_primask);
     printf("\n%d/%d passed\n", tests_run - tests_failed, tests_run);
     return tests_failed ? 1 : 0;
 }

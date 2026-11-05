@@ -45,13 +45,35 @@ firmware prints over USART2 to the terminal.
 4. SysTick model (`src/periph/systick.c`): CSR/RVR/CVR; when CVR reaches 0 with
    TICKINT set, it raises exception 15. `cpu_step` takes a pending exception
    before fetching the next instruction
-5. Firmware: replace `delay()` with a SysTick tick counter
-6. USART2 model: writes to DR go to stdout; SR reads with TXE and TC set.
+5. PRIMASK: CPSID i / CPSIE i, MRS of PRIMASK → `test_primask` (see below)
+6. Firmware: replace `delay()` with a SysTick tick counter
+7. USART2 model: writes to DR go to stdout; SR reads with TXE and TC set.
    Needs RCC_APB1ENR and GPIO AFRL in the existing models
-7. Firmware: print a boot line. Renode's UART test already expects
+8. Firmware: print a boot line. Renode's UART test already expects
    `sensor-node boot`, so the same binary can be checked in both
 
-Steps 1-3 are CPU core. Steps 4 and 6 are new peripheral models.
+Steps 1-3 and 5 are CPU core. Steps 4 and 7 are new peripheral models.
+
+## Step 5: PRIMASK
+
+Firmware calls `__disable_irq()` / `__enable_irq()` around code that must not be
+interrupted. Those are `CPSID i` (0xB672) and `CPSIE i` (0xB662).
+
+- Read B1.4.3 (PRIMASK), CPS and MRS in B5.2. MRS reads PRIMASK with SYSm = 16.
+- PRIMASK = 1 stops pending exceptions with configurable priority (SysTick
+  included) from being *taken*. It does not stop SysTick from counting or from
+  setting the pending bit.
+- `tests/progs/15_primask.s`: SysTick fires four times while masked. The four
+  requests become one pending exception, and it is taken right after CPSIE.
+
+Questions before you code:
+
+1. Where in `cpu_step` does PRIMASK need to be checked? Does SVC also stop when
+   PRIMASK = 1? (Look at which exceptions PRIMASK masks.)
+2. Is PRIMASK saved in the exception frame? What does the handler see?
+3. Which other CPS encodings exist (`CPSID f`, the `a`/`i`/`f` bits)? Which ones
+   will this milestone accept, and what should the others do?
+4. Should MSR PRIMASK (`__set_PRIMASK`) come now or later? What firmware needs it?
 
 ## Check yourself
 
