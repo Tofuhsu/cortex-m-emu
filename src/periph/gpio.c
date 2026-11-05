@@ -10,7 +10,7 @@ struct gpio {
     uint32_t base;
     const rcc_t *rcc;
     unsigned enable_bit;
-    uint32_t moder, otyper, ospeedr, pupdr, afrl;
+    uint32_t moder, otyper, ospeedr, pupdr, afrl, afrh;
     uint16_t idr, odr;
     uint64_t gated_writes, bad_accesses;
     gpio_odr_change_fn observer;
@@ -26,7 +26,7 @@ static bool valid_access(uint32_t offset, int size)
         return false;
     }
     uint32_t reg = offset & ~3u;
-    if (reg > GPIO_BSRR_OFFSET && reg != GPIO_AFRL_OFFSET) {
+    if (reg > GPIO_BSRR_OFFSET && reg != GPIO_AFRL_OFFSET && reg != GPIO_AFRH_OFFSET) {
         return false;
     }
     /* RM0390 specifies word-only accesses to IDR. */
@@ -68,6 +68,7 @@ static uint32_t gpio_read(void *ctx, uint32_t offset, int size)
     case GPIO_ODR_OFFSET:     value = gpio->odr; break;
     case GPIO_BSRR_OFFSET:    value = 0; break;
     case GPIO_AFRL_OFFSET:    value = gpio->afrl; break;
+    case GPIO_AFRH_OFFSET:    value = gpio->afrh; break;
     }
     return (value >> (8u * (offset & 3u))) & width_mask(size);
 }
@@ -103,6 +104,9 @@ static void gpio_write(void *ctx, uint32_t offset, uint32_t value, int size)
     case GPIO_AFRL_OFFSET:
         gpio->afrl = (gpio->afrl & ~mask) | command;
         break;
+    case GPIO_AFRH_OFFSET:
+        gpio->afrh = (gpio->afrh & ~mask) | command;
+        break;
     case GPIO_IDR_OFFSET:
         /* Read-only: a valid write has no effect. */
         break;
@@ -122,8 +126,8 @@ static void gpio_write(void *ctx, uint32_t offset, uint32_t value, int size)
 gpio_t *gpio_new(const char *name, uint32_t base,
                  const rcc_t *rcc, unsigned enable_bit)
 {
-    if (!name || !*name || !rcc || base != GPIOA_BASE ||
-        enable_bit != RCC_GPIOA_ENABLE_BIT) {
+    if (!name || !*name || !rcc || !((base == GPIOA_BASE && enable_bit == RCC_GPIOA_ENABLE_BIT) ||
+          (base == GPIOB_BASE && enable_bit == RCC_GPIOB_ENABLE_BIT))) {
         return NULL;
     }
     gpio_t *gpio = calloc(1, sizeof *gpio);
@@ -145,10 +149,11 @@ gpio_t *gpio_new(const char *name, uint32_t base,
 
 void gpio_reset(gpio_t *gpio)
 {
-    gpio->moder = 0xA8000000u;
+    gpio->moder = gpio->base == GPIOA_BASE ? 0xA8000000u : 0x00000280u;
     gpio->otyper = 0;
-    gpio->ospeedr = 0x0C000000u; /* RM0390 Rev 9, section 7.4.3 (GPIOA). */
-    gpio->pupdr = 0x64000000u;
+    gpio->ospeedr = gpio->base == GPIOA_BASE ? 0x0C000000u : 0x000000C0u; /* RM0390 Rev 9, section 7.4.3 (GPIOA). */
+    gpio->pupdr = gpio->base == GPIOA_BASE ? 0x64000000u : 0x00000100u;
+    gpio->afrh = 0;
     gpio->afrl = 0; /* RM0390 7.4.9. */
     gpio->idr = 0; /* Deterministic model default; hardware reset is undefined. */
     gpio->odr = 0;
@@ -180,11 +185,11 @@ uint16_t gpio_get_odr(const gpio_t *gpio)
 
 bool gpio_pin_is_af(const gpio_t *gpio, unsigned pin, unsigned af)
 {
-    if (!gpio || pin >= 8u || af >= 16u) {
+    if (!gpio || pin >= 16u || af >= 16u) {
         return false;
     }
     return ((gpio->moder >> (2u * pin)) & 3u) == 2u &&
-           ((gpio->afrl >> (4u * pin)) & 15u) == af;
+           (((pin < 8u ? gpio->afrl : gpio->afrh) >> (4u * (pin % 8u))) & 15u) == af;
 }
 
 uint64_t gpio_gated_write_count(const gpio_t *gpio)
@@ -206,4 +211,9 @@ void gpio_set_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx)
 {
     gpio->observer = callback;
     gpio->observer_ctx = ctx;
+}
+
+bool gpio_pin_is_open_drain(const gpio_t *gpio, unsigned pin)
+{
+    return gpio && pin < 16u && (gpio->otyper & (1u << pin)) != 0;
 }

@@ -11,6 +11,8 @@
 #define RCC_AHB1ENR_OFFSET    0x30u
 #define RCC_APB1ENR_OFFSET    0x40u
 #define RCC_GPIOA_ENABLE_BIT 0u
+#define RCC_GPIOB_ENABLE_BIT 1u
+#define RCC_I2C1_ENABLE_BIT 21u
 #define RCC_USART2_ENABLE_BIT 17u
 
 typedef struct rcc rcc_t;
