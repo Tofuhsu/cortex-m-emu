@@ -63,3 +63,29 @@ Tests read calibration/raw bytes through I2C and run independent full Bosch inte
 At unchanged reset PCLK1=16 MHz, standard-mode CCR=16,000,000/(2*100,000)=80; TRISE=16+1=17 and CR2.FREQ=16. PA5 scheduling uses a recurring SysTick deadline so I2C/UART work does not accumulate delay drift, provided service work completes within a period. This is not a real-time guarantee.
 
 Target GCC compilation, missing-instruction discovery, new PA5 interval measurements and Renode/Robot verification are **pending**. Do not substitute host C tests for those checks. See `acceptance.md`.
+
+## J: prediction recorded before the new target binary is run
+
+Conditions: ARM GCC `-O0`, RVR=15999, each half-period=500 ticks, physical
+temperature input 2500 or 3050 centidegrees, one SysTick tick per executed
+instruction including handler instructions. Nominal deadline separation is
+16000 * 500 = 8,000,000 instructions. Do not add handler instruction counts a
+second time. The actual `wait_period` loop needs the new target disassembly;
+the old `delay_ms` loop's seven instructions cannot be reused as its bound.
+
+Let deadline j be D_j, and let the actual PA5 write occur D_j+e_j. Then the
+interval is 8,000,000+e_j-e_(j-1). With the same post-wait path and bounded
+polling delay, this gives bounded jitter rather than cumulative drift.
+There are two different paths: one goes directly to reset PA5, while the
+other reads/prints the sensor before setting PA5 again. Sensor/UART service
+instructions after the deadline therefore enlarge the latter e_j and can
+produce alternating longer/shorter intervals. A bound of one polling loop
+alone would be wrong for the new firmware. Measure both paths from the new
+objdump and include their path-length difference in the bound.
+
+If sensor/UART work overruns the next deadline, wait_period can return
+immediately and transitions can bunch up; if PRIMASK is held long enough to
+coalesce SysTick requests, software ticks lag and physical instruction
+intervals can grow. Neither effect is fixed by absolute deadlines. The first
+transition has startup phase and initialization costs and must be reported
+separately. Actual J measurements remain pending the new ELF/bin/disassembly.

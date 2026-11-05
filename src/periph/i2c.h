@@ -3,6 +3,10 @@
 
 #include "gpio.h"
 
+/* RM0390 24.6: CR1/CR2/DR/SR1/SR2/CCR/TRISE; Rev9 section locators
+ * pp762,764,766,766,769,770,771. See docs/manual_checks.md for the
+ * distinction between retrieved bit tables and page-only index checks.
+ */
 #define I2C1_BASE 0x40005400u
 #define I2C_CR1 0x00u
 #define I2C_CR2 0x04u

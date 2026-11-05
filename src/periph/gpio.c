@@ -149,9 +149,12 @@ gpio_t *gpio_new(const char *name, uint32_t base,
 
 void gpio_reset(gpio_t *gpio)
 {
+    /* RM0390 Rev9 7.4.1 p185; 7.4.3-4 p186: separate A/B reset values.
+     * PB8/PB9 AF4 mapping: DS10693 Rev11 table11 p59 (see gpio_pin_is_af).
+     */
     gpio->moder = gpio->base == GPIOA_BASE ? 0xA8000000u : 0x00000280u;
     gpio->otyper = 0;
-    gpio->ospeedr = gpio->base == GPIOA_BASE ? 0x0C000000u : 0x000000C0u; /* RM0390 Rev 9, section 7.4.3 (GPIOA). */
+    gpio->ospeedr = gpio->base == GPIOA_BASE ? 0x0C000000u : 0x000000C0u;
     gpio->pupdr = gpio->base == GPIOA_BASE ? 0x64000000u : 0x00000100u;
     gpio->afrh = 0;
     gpio->afrl = 0; /* RM0390 7.4.9. */

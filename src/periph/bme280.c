@@ -3,7 +3,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Bosch BST-BME280-DS001-24, 4.2.3, 5.3-5.4, 6.2.
+/* Bosch BST-BME280-DS001-24: 4.2.2 p24 (T1/T2/T3 88..8D),
+ * 4.2.3 p25 (integer compensation), 5.4.1-3 p27 (id60, humidity latch),
+ * 5.4.5 p29 (skipped T/P sample80000), humidity table20 p28 (8000).
  * Chosen SYNTHETIC calibration, not a physical chip or a datasheet example:
  * T1=24000 T2=25600 T3=0; P1=31250 P2..P9=0;
  * H1=0 H2=256 H3=0 H4=256 H5=H6=0.

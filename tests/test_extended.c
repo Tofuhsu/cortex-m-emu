@@ -199,6 +199,16 @@ static void test_bme(void)
         assert(llabs(compensate_p(cal+6,raw20(raw),fine)-(int64_t)101325*256)<=26);
         assert(compensate_h(hc,cal[25],(unsigned)raw[6]*256+raw[7],fine)==51200);
     }
+    /* Measure the inverse's error over its complete centidegree input API.
+     * Also reject the reserved skipped sample, even if its numeric value
+     * happens to compensate to the requested temperature.
+     */
+    for (int32_t requested = -4000; requested <= 8500; ++requested) {
+        assert(bme280_set_temperature(b, requested)); read_sensor(&f, 0xFA, raw, 3);
+        int64_t fine;
+        assert(raw20(raw) != 0x80000u);
+        assert(compensate_t(cal, raw20(raw), &fine) == requested);
+    }
     assert(!bme280_set_temperature(b,8501));
     assert(bme280_set_humidity(b,0)); assert(bme280_set_pressure(b,30000)); read_sensor(&f,0xF7,raw,8);
     int64_t fine; (void)compensate_t(cal,raw20(raw+3),&fine);

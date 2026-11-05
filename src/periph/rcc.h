@@ -12,6 +12,7 @@
 #define RCC_APB1ENR_OFFSET    0x40u
 #define RCC_GPIOA_ENABLE_BIT 0u
 #define RCC_GPIOB_ENABLE_BIT 1u
+/* RM0390 Rev9 6.3.13, p145: APB1ENR offset40, reset0, I2C1EN bit21. */
 #define RCC_I2C1_ENABLE_BIT 21u
 #define RCC_USART2_ENABLE_BIT 17u
 
