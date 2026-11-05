@@ -24,7 +24,7 @@ Comparison rules:
 | --- | ---: | --- |
 | 01 | 0 | Reset state matches (program is only BKPT) |
 | 02–10, 12, 14, 16–18, 20, 23 | 2–50 each | Match |
-| 24–33 (new Thumb/Thumb-2 instructions) | 4–25 each | Match |
+| 24–35 (new Thumb/Thumb-2 instructions) | 4–25 each | Match |
 | 13 SysTick | 106 (prefix) | Match up to the first SysTick entry |
 | 15 PRIMASK | 52 (prefix) | Match up to the first SysTick entry |
 | 19 NVIC software pend | 4 (prefix) | Match up to IRQ entry |
@@ -32,7 +32,7 @@ Comparison rules:
 | 21 GPIOB | 12 | 1 difference at step 12 |
 | 22 I2C chip ID | 60 | Match (default timing: differs from step 35; stock model: from step 28) |
 | Blink firmware `6151eed`, up to the first SysTick entry | 16439 | Match (entry is step 16440) |
-| BME280 firmware, first 20000 steps | 20000 | Identical for 2027 steps; differs from step 2028 (default timing: 1018 steps; stock model: 764 steps) |
+| Sensor firmware (BME280, UART interrupts, SSD1306), first 20000 steps | 20000 | Identical for 4299 steps; differs from step 4300, the first USART2 interrupt entry |
 
 A mutation check confirms the comparison can catch a wrong flag. `tools/test_negs_against_renode.py` flips the C flag of NEGS in a temporary build. Compared against Renode's trace of program 25, the unmodified emulator matches all six steps, and the mutant is caught at step 6: xPSR is `0x41000000` in the mutant and `0x61000000` in Renode.
 
@@ -42,7 +42,8 @@ A mutation check confirms the comparison can catch a wrong flag. `tools/test_neg
 - **19: step that records exception entry.** Renode records IRQ entry in the same step as the ISPR store that pends it. The emulator records it in the same step as the first handler instruction. From step 6 on, both traces agree again, including the return.
 - **11: BSRR set and reset together.** RM0390 says set wins when both bits are written. The emulator reads back ODR = 0x20; Renode reads back 0.
 - **21: AFRH byte write.** Renode's GPIO ignores a byte store to AFRH; a word store of the same value reads back correctly. RM0390 allows byte access to GPIO registers. The emulator stores the byte. The firmware writes AFRH with a word store, so it is not affected.
-- **BME280 firmware: sensor calibration data.** Step 2028 is the first calibration byte read from I2C DR. The emulator's BME280 model returns 0xC0 (its declared synthetic calibration, T1 = 24000); Renode's model returns 0x00 (its fixed calibration, T1 = T2 = 0x8000, T3 = 0, `BME280.cs` line 174). The two sensor models hold different constants, so the compensation arithmetic differs from here on. Both print `temperature: 25.00`. This is a difference in the sensor models' data, not in instruction execution.
+- **Sensor firmware: USART2 interrupt entry.** Step 4300 is the first USART2 TXE interrupt. Renode records the entry (IPSR = 54, PC = `USART2_IRQHandler`) in step 4300, the emulator in step 4301, together with the handler's first instruction; this is the same entry-step difference as program 19. From step 4301 the traces agree again until the next interrupt entry, at step 4402. No rule hides this; the blink firmware above is the case compared to its first exception.
+- **Earlier BME280 firmware (before UART interrupts and the display): sensor calibration data.** Step 2028 is the first calibration byte read from I2C DR. The emulator's BME280 model returns 0xC0 (its declared synthetic calibration, T1 = 24000); Renode's model returns 0x00 (its fixed calibration, T1 = T2 = 0x8000, T3 = 0, `BME280.cs` line 174). The two sensor models hold different constants, so the compensation arithmetic differs from here on. Both print `temperature: 25.00`. This is a difference in the sensor models' data, not in instruction execution.
 - **22 and firmware with default Renode timing: BTF timing.** Without `InstantTransfers`, program 22 waits for BTF at step 35: the emulator reads SR1 = 0x84 at once, Renode reads 0x80 until one byte period has passed, so it polls once more. The BME280 firmware's step 1019 is the same wait.
 - **22 with the stock model: SR1 after the address byte.**
   - At step 28, stock Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only).
