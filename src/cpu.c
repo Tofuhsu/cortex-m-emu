@@ -257,6 +257,22 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 {
     /* Decode only implemented encodings; IT blocks are not modeled yet. */
 
+    /* CPS T1: only CPSIE i / CPSID i. This model currently runs privileged;
+     * CONTROL.nPRIV and ignored unprivileged CPS writes are future work.
+     */
+    if (insn == 0xB662u || insn == 0xB672u) {
+        cpu->primask = insn == 0xB672u;
+        return;
+    }
+    if ((insn & 0xFFE0u) == 0xB660u) {
+        if ((insn & 0x000Cu) != 0 || (insn & 3u) == 0) {
+            cpu_halt(cpu, "UNPREDICTABLE CPS encoding 0x%04x at 0x%08x", insn, pc);
+        } else {
+            cpu_halt(cpu, "CPS FAULTMASK update not implemented at 0x%08x", pc);
+        }
+        return;
+    }
+
     /* ADDS (immediate) T1: 0001110 imm3 Rn Rd. */
     if ((insn & 0xFE00u) == 0x1C00u) {
         unsigned rd = insn & 0x07u;
@@ -465,6 +481,10 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 
     /* SVC T1: 1101 1111 imm8. Stack the NEXT instruction, not pc+4. */
     if ((insn & 0xFF00u) == 0xDF00u) {
+        if (cpu->primask) {
+            cpu_halt(cpu, "SVC with PRIMASK=1 escalates to HardFault (not implemented)");
+            return;
+        }
         (void)exception_enter(cpu, bus, 11u, pc + 2u);
         return;
     }
@@ -562,11 +582,14 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
             cpu_halt(cpu, "UNPREDICTABLE MRS Rd=%u at 0x%08x", rd, pc);
             return;
         }
-        if (sysm != 5u) {
+        if (sysm == 5u) {
+            cpu->r[rd] = cpu->ipsr & XPSR_IPSR_MASK;
+        } else if (sysm == 16u) {
+            cpu->r[rd] = cpu->primask ? 1u : 0u;
+        } else {
             cpu_halt(cpu, "MRS SYSm 0x%02x not implemented at 0x%08x", sysm, pc);
             return;
         }
-        cpu->r[rd] = cpu->ipsr & XPSR_IPSR_MASK;
         return;
     }
 
@@ -663,9 +686,10 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
 
     /* Defer asynchronous exceptions while in a handler: no nesting yet.
      * Save the unexecuted instruction's address, not the SVC pc+2 address.
-     * PRIMASK/CPS and SHPR3/NVIC priority arbitration remain future work.
+     * SHPR3/NVIC priority arbitration remains future work.
      */
-    if (cpu->ipsr == 0 && cpu_exception_pending(cpu, CPU_EXCEPTION_SYSTICK)) {
+    if (cpu->ipsr == 0 && !cpu->primask &&
+        cpu_exception_pending(cpu, CPU_EXCEPTION_SYSTICK)) {
         if (!exception_enter(cpu, bus, CPU_EXCEPTION_SYSTICK, cpu->r[PC])) {
             if (bus_fault(bus)) {
                 cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));

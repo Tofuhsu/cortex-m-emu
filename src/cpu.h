@@ -22,6 +22,7 @@ typedef void (*cpu_trace_fn)(void *ctx, uint32_t pc, uint16_t first_halfword);
 typedef struct {
     uint32_t r[16];      /* r0-r12, SP (r13), LR (r14), PC (r15) */
     bool n, z, c, v;     /* APSR condition flags */
+    bool primask;        /* Configurable-priority exception mask; reset = 0 */
     uint16_t ipsr;       /* 0 = Thread mode; otherwise active exception number */
     uint32_t pending_exceptions; /* bit N = exception N pending */
     uint64_t steps;      /* instructions executed */
