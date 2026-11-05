@@ -32,6 +32,7 @@ $(BUILD)/test_extended: tests/test_extended.c $(LIB_SRC) src/*.h src/periph/*.h 
 test: $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
 	./$(BUILD)/test_runner
 	./$(BUILD)/test_extended --programs
+	python3 tests/test_trace_tools.py
 	python3 tests/test_cli.py
 
 $(BUILD) $(BUILD)/progs:
@@ -44,3 +45,4 @@ clean:
 .PHONY: test-host
 test-host: $(BUILD)/test_extended
 	./$(BUILD)/test_extended
+	python3 tests/test_trace_tools.py

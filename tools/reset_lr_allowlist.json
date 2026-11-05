@@ -1,0 +1,10 @@
+[
+  {
+    "field": "r14",
+    "first_step": 0,
+    "last_step": 4294967295,
+    "emu": "0xffffffff",
+    "renode": "0x00000000",
+    "reason": "Known reset-LR difference only: exact FFFFFFFF-versus-zero pair. No flags, PCs or other LR values are ignored."
+  }
+]
