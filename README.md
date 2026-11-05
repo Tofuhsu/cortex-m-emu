@@ -43,8 +43,3 @@ Instruction-accurate, not cycle-accurate: no pipeline, wait states or bus timing
 - With a fixed nonzero reload value, the SysTick counter period is `RVR+1` instruction ticks.
 - Exception handling currently supports the basic MSP frame and return to Thread mode using `EXC_RETURN=0xFFFFFFF9`. Nested exceptions, priority arbitration, PSP and floating-point frames are not modeled. Asynchronous SysTick requests wait while a handler is active and coalesce into one pending request.
 - PRIMASK blocks asynchronous SysTick dispatch without stopping the timer or clearing pending state. It is not part of xPSR or the exception frame. The model assumes privileged execution; `MSR PRIMASK`, `CONTROL.nPRIV`, BASEPRI and FAULTMASK are not implemented. An SVC executed with PRIMASK set halts with an explicit HardFault-escalation message because HardFault handling is not implemented.
-
-## AI assistance
-
-Written with an AI assistant: Makefile, CI, `src/bus.c`, `src/loader.c`, `src/main.c` (except the PA5 observer), the test programs (including the RCC/GPIO test, `tests/progs/11_gpio.s`) and test runner, and the docs.
-Written by the author: the CPU core (`src/cpu.c`), the peripheral models (`src/periph/`) and the PA5 observer in `src/main.c`. This split is kept accurate as the project grows.
