@@ -188,6 +188,19 @@ static void test_wide_load_store(void)
     bus_free(bus);
 }
 
+/* STRB/LDRB (immediate) T1. Single-stepped in Renode 1.17 on 2026-11-05: same r2, r3, r5, r6. */
+static void test_byte_load_store(void)
+{
+    cpu_t cpu;
+    bus_t *bus = run("18_byte_load_store", &cpu);
+    CHECK_REG(&cpu, 2, 0x80);
+    CHECK_REG(&cpu, 3, 0xFF);
+    CHECK_REG(&cpu, 5, 0x80FFA534);
+    CHECK_REG(&cpu, 6, 0xA5000000);
+    check("steps", (uint32_t)cpu.steps, 11); /* 10 instructions + BKPT */
+    bus_free(bus);
+}
+
 /*
  * RCC + GPIOA models. Single-stepped in Renode 1.17 on 2026-11-04: MODER read-back
  * and the ODR after each BSRR set/reset match. Two deliberate differences, where
@@ -497,6 +510,7 @@ int main(void)
     RUN(test_cond_branches);
     RUN(test_thumb2_logic);
     RUN(test_wide_load_store);
+    RUN(test_byte_load_store);
     RUN(test_gpio);
     RUN(test_svc);
     RUN(test_svc_align);

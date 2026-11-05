@@ -401,6 +401,17 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* STRB/LDRB (immediate) T1: 01110/01111 imm5 Rn Rt. Byte offset, not scaled;
+     * LDRB zero-extends the loaded byte.
+     */
+    if (opcode == 0x0Eu || opcode == 0x0Fu) {
+        unsigned rn = (insn >> 3) & 0x07u;
+        unsigned rt = insn & 0x07u;
+        uint32_t address = cpu->r[rn] + ((insn >> 6) & 0x1Fu);
+        transfer_memory(cpu, bus, rt, address, 1, opcode == 0x0Fu);
+        return;
+    }
+
     /* STR/LDR (immediate) T2, SP-relative: 10010/10011 Rt imm8. */
     if (opcode == 0x12u || opcode == 0x13u) {
         unsigned rt = (insn >> 8) & 0x07u;
