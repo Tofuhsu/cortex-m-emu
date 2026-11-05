@@ -45,6 +45,11 @@ static void test_nvic(void)
     assert(nvic_pend(n,38) && nvic_pend(n,3));
     assert(cpu_step(&c,b)==0 && c.ipsr==0); c.primask=false;
     assert(cpu_step(&c,b)==0 && c.ipsr==19 && cpu_exception_pending(&c,54));
+    /* Invalid vector: pending is only acknowledged after successful entry. */
+    cpu_reset(&c,b); nvic_reset(n);
+    bus_write32(b,0xE000E11C,0xFFFF0000u); assert(!bus_read32(b,0xE000E11C));
+    bus_write32(b,0xE000E11C,0x8000u); assert(nvic_pend(n,239));
+    assert(cpu_step(&c,b)==-1 && cpu_exception_pending(&c,255) && c.steps==0 && c.ipsr==0);
     assert(!nvic_bad_access_count(n) && !bus_fault(b)); nvic_free(n); bus_free(b);
     puts("PASS NVIC: IRQ38/IPSR54, gating, coalescing, PRIMASK, return, arbitration, bank bounds");
 }
@@ -113,6 +118,11 @@ static void test_i2c(void)
     wr(&f,I2C_DR,0xD0); assert((rd(&f,I2C_SR1)&(I2C_BTF|I2C_TXE))==(I2C_BTF|I2C_TXE));
     uint8_t data[16]; rx(&f,0xA1,data,1); assert(data[0]==0x80 && !fake.ack[0]);
     assert(fake.starts==2 && fake.stops==1 && fake.writes==1 && fake.bytes[0]==0xD0);
+    /* RM0390 24.6.7: SR1 read before ADDR rises still arms the next SR2. */
+    wr(&f,I2C_CR1,I2C_PE|I2C_START); (void)rd(&f,I2C_SR1);
+    wr(&f,I2C_DR,0xA0); assert(i2c_peek(f.i2c,I2C_SR1)&I2C_ADDR);
+    (void)rd(&f,I2C_SR2); assert(!(i2c_peek(f.i2c,I2C_SR1)&I2C_ADDR));
+    wr(&f,I2C_CR1,I2C_PE|I2C_STOP);
     for(unsigned n=2;n<=8;++n) {
         unsigned start=fake.reads; rx(&f,0xA1,data,n);
         assert(fake.reads==start+n);
