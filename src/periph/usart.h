@@ -1,9 +1,11 @@
-/* STM32F446 USART2: immediate, polling-only 8-bit TX routed through PA2/AF7.
- * No baud timing, RX, DMA or USART interrupts. No SR-read sequence state.
+/* STM32F446 USART2: immediate 8-bit TX routed through PA2/AF7, host-fed RX,
+ * and the TXE/RXNE/ORE interrupt request. No baud timing, DMA, parity or
+ * SR-read sequence state.
  */
 #ifndef PERIPH_USART_H
 #define PERIPH_USART_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "bus.h"
@@ -16,13 +18,19 @@
 #define USART_BRR_OFFSET 0x08u
 #define USART_CR1_OFFSET 0x0Cu
 
+#define USART_SR_ORE  (UINT32_C(1) << 3)
+#define USART_SR_RXNE (UINT32_C(1) << 5)
 #define USART_SR_TC   (UINT32_C(1) << 6)
 #define USART_SR_TXE  (UINT32_C(1) << 7)
-#define USART_CR1_TE  (UINT32_C(1) << 3)
-#define USART_CR1_UE  (UINT32_C(1) << 13)
+#define USART_CR1_RE     (UINT32_C(1) << 2)
+#define USART_CR1_TE     (UINT32_C(1) << 3)
+#define USART_CR1_RXNEIE (UINT32_C(1) << 5)
+#define USART_CR1_TXEIE  (UINT32_C(1) << 7)
+#define USART_CR1_UE     (UINT32_C(1) << 13)
 
 typedef struct usart usart_t;
 typedef void (*usart_tx_fn)(void *ctx, uint8_t byte);
+typedef void (*usart_irq_fn)(void *ctx);
 
 typedef struct {
     uint64_t clock_gated_writes;      /* Any valid register write with APB1 off. */
@@ -47,11 +55,25 @@ periph_t usart_as_periph(usart_t *usart);
  */
 void usart_set_tx_observer(usart_t *usart, usart_tx_fn fn, void *ctx);
 
+/* Called whenever the interrupt request is asserted after a state change:
+ * (TXEIE and TXE) or (RXNEIE and (RXNE or ORE)). The caller pends the NVIC
+ * line (IRQ 38). The request is not re-raised while it stays asserted
+ * unless state changes again; NULL disables it.
+ */
+void usart_set_irq(usart_t *usart, usart_irq_fn fn, void *ctx);
+
+/* Offer one received byte. Returns false (byte not taken) when the clock,
+ * UE or RE is off, or when RXNE is still set: this model holds bytes back
+ * instead of overrunning. Callers retry later.
+ */
+bool usart_receive(usart_t *usart, uint8_t byte);
+
 /* No side effects or diagnostics; bypass APB1 gating. Unknown offset -> 0.
- * DR reads return zero (RX is absent), not the last transmitted byte.
+ * DR peeks return the received byte without clearing RXNE.
  * BRR stores its low 16 bits; it does not affect transmission timing.
- * CR1 supports UE/TE only. Reserved bits are ignored; unsupported RW bits
- * reject the complete CR1 write and increment bad_accesses.
+ * CR1 supports UE/TE/RE/RXNEIE/TXEIE. Reserved bits are ignored; other RW
+ * bits reject the complete CR1 write and increment bad_accesses.
+ * A bus read of DR returns the received byte and clears RXNE and ORE.
  */
 uint32_t usart_peek(const usart_t *usart, uint32_t offset);
 usart_stats_t usart_get_stats(const usart_t *usart);

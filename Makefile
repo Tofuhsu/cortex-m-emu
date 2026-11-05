@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -O2 -g -Isrc
-LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c src/gdbstub.c
+LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c src/periph/ssd1306.c src/gdbstub.c
 BUILD   := build
 
 # Test programs are assembled with the ARM toolchain and linked at the start of flash.

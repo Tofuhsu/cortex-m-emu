@@ -7,6 +7,9 @@
  *         (after any pending exception has been taken, so it shows what really runs)
  *     --gdb port  wait for arm-none-eabi-gdb on 127.0.0.1:port (0 = any free port);
  *         the debugger controls execution and -n is ignored
+ *     --uart-rx text  bytes for USART2 RX; \r, \n and \\ are escapes. One byte is
+ *         offered after each instruction while RXNE is clear and RE is on
+ *     --oled-dump file  write the SSD1306 (I2C 0x3C) frame as a PBM image at exit
  */
 #include <errno.h>
 #include <limits.h>
@@ -25,6 +28,7 @@
 #include "periph/usart.h"
 #include "periph/nvic.h"
 #include "periph/bme280.h"
+#include "periph/ssd1306.h"
 #include "vcd.h"
 #include "gdbstub.h"
 
@@ -59,10 +63,44 @@ static void trace_instruction(void *ctx, uint32_t pc, uint16_t first_halfword)
     printf("%08x: %04x\n", pc, first_halfword);
 }
 
-/* SysTick counts executed instructions: one tick after each step (not clock cycles). */
-static void tick_systick(void *ctx)
+typedef struct {
+    systick_t *systick;
+    usart_t *usart;
+    const char *rx;      /* remaining host RX bytes (already unescaped) */
+    size_t rx_left;
+} step_ctx_t;
+
+/* After each step: SysTick counts executed instructions (one tick per step,
+ * not clock cycles), then the next host RX byte is offered to USART2. */
+static void after_step(void *ctx)
 {
-    systick_tick(ctx);
+    step_ctx_t *step = ctx;
+    systick_tick(step->systick);
+    if (step->rx_left && usart_receive(step->usart, (uint8_t)*step->rx)) {
+        step->rx++;
+        step->rx_left--;
+    }
+}
+
+static void pend_usart2(void *ctx)
+{
+    nvic_pend(ctx, 38u); /* RM0390 table 38: USART2 global interrupt */
+}
+
+/* Unescape \r, \n and \\ in place. Returns false for any other escape. */
+static bool unescape(char *text, size_t *length)
+{
+    char *out = text;
+    for (const char *in = text; *in; ++in) {
+        if (*in != '\\') { *out++ = *in; continue; }
+        ++in;
+        if (*in == 'r') *out++ = '\r';
+        else if (*in == 'n') *out++ = '\n';
+        else if (*in == '\\') *out++ = '\\';
+        else return false;
+    }
+    *length = (size_t)(out - text);
+    return true;
 }
 
 static void pend_systick(void *ctx)
@@ -116,7 +154,9 @@ int main(int argc, char **argv)
     unsigned long long max_steps = 1000000;
     int trace = 0;
     int32_t temperature = 2500;
-    const char *path = NULL, *vcd_path = NULL, *regs_path = NULL;
+    const char *path = NULL, *vcd_path = NULL, *regs_path = NULL, *oled_path = NULL;
+    char *uart_rx = NULL;
+    size_t uart_rx_length = 0;
     long gdb_port = -1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
@@ -124,6 +164,11 @@ int main(int argc, char **argv)
         } else if (strcmp(argv[i], "-t") == 0) trace = 1;
         else if (strcmp(argv[i], "--vcd") == 0 && i + 1 < argc) vcd_path = argv[++i];
         else if (strcmp(argv[i], "--trace-regs") == 0 && i + 1 < argc) regs_path = argv[++i];
+        else if (strcmp(argv[i], "--oled-dump") == 0 && i + 1 < argc) oled_path = argv[++i];
+        else if (strcmp(argv[i], "--uart-rx") == 0 && i + 1 < argc) {
+            uart_rx = argv[++i];
+            if (!unescape(uart_rx, &uart_rx_length)) goto usage;
+        }
         else if (strcmp(argv[i], "--gdb") == 0 && i + 1 < argc) {
             unsigned long long value;
             if (!unsigned_arg(argv[++i], &value) || value > 65535) goto usage;
@@ -141,6 +186,8 @@ int main(int argc, char **argv)
     /* Outputs must not truncate the input image or each other. */
     if ((vcd_path && same_file(path, vcd_path)) ||
         (regs_path && same_file(path, regs_path)) ||
+        (oled_path && (same_file(path, oled_path) || (vcd_path && same_file(vcd_path, oled_path)) ||
+                       (regs_path && same_file(regs_path, oled_path)))) ||
         (vcd_path && regs_path && same_file(vcd_path, regs_path))) goto usage;
 
     int result = 1;
@@ -153,6 +200,7 @@ int main(int argc, char **argv)
     nvic_t *nvic = NULL;
     i2c_t *i2c = NULL;
     bme280_t *bme = NULL;
+    ssd1306_t *oled = NULL;
     vcd_t *vcd = NULL;
     FILE *regs = NULL;
     if (!bus || load_bin(bus, path) != 0) { fprintf(stderr, "cannot load %s\n", path); goto cleanup; }
@@ -165,11 +213,13 @@ int main(int argc, char **argv)
     nvic = nvic_new(&cpu);
     i2c = gpiob ? i2c_new(rcc, gpiob) : NULL;
     bme = bme280_new(0x76);
-    if (!rcc || !gpioa || !gpiob || !systick || !usart2 || !nvic || !i2c || !bme) {
+    oled = ssd1306_new(0x3C);
+    if (!rcc || !gpioa || !gpiob || !systick || !usart2 || !nvic || !i2c || !bme || !oled) {
         fprintf(stderr, "cannot allocate peripheral models\n"); goto cleanup;
     }
     bme280_set_temperature(bme, temperature);
     if (i2c_attach(i2c, bme280_as_device(bme)) != 0 ||
+        i2c_attach(i2c, ssd1306_as_device(oled)) != 0 ||
         bus_add_periph(bus, rcc_as_periph(rcc)) != 0 ||
         bus_add_periph(bus, gpio_as_periph(gpioa)) != 0 ||
         bus_add_periph(bus, gpio_as_periph(gpiob)) != 0 ||
@@ -190,7 +240,9 @@ int main(int argc, char **argv)
         trace_registers(regs, &cpu);
     }
     observer_t observer = {&cpu, vcd};
-    cpu_set_step_hook(&cpu, tick_systick, systick);
+    step_ctx_t step = {systick, usart2, uart_rx, uart_rx_length};
+    cpu_set_step_hook(&cpu, after_step, &step);
+    usart_set_irq(usart2, pend_usart2, nvic);
     if (trace) cpu_set_trace_hook(&cpu, trace_instruction, NULL);
     gpio_set_observer(gpioa, observe_pa5, &observer);
     usart_set_tx_observer(usart2, print_usart_byte, &observer);
@@ -231,16 +283,24 @@ int main(int argc, char **argv)
     if (gpio_gated_write_count(gpioa) || gpio_gated_write_count(gpiob))
         printf("note: GPIO gated writes A=%llu B=%llu\n", (unsigned long long)gpio_gated_write_count(gpioa),
                (unsigned long long)gpio_gated_write_count(gpiob));
+    if (step.rx_left) printf("note: %zu UART RX bytes not delivered\n", step.rx_left);
+    if (ssd1306_unknown_bytes(oled))
+        printf("note: SSD1306 unknown bytes=%llu\n", (unsigned long long)ssd1306_unknown_bytes(oled));
     result = cpu.halted && strncmp(cpu.halt_reason, "bkpt #", 6) != 0 ? 1 : 0;
+    if (oled_path) {
+        FILE *image = fopen(oled_path, "w");
+        if (!image || !ssd1306_write_pbm(oled, image)) { perror(oled_path); result = 1; }
+        if (image && fclose(image)) result = 1;
+    }
 cleanup:
     if (regs && (ferror(regs) || fflush(regs))) result = 1;
     if (regs && fclose(regs)) result = 1;
     if (!vcd_close(vcd)) { fprintf(stderr, "VCD write failed\n"); result = 1; }
     nvic_free(nvic); usart_free(usart2); systick_free(systick);
-    i2c_free(i2c); bme280_free(bme); gpio_free(gpiob); gpio_free(gpioa); rcc_free(rcc); bus_free(bus);
+    i2c_free(i2c); bme280_free(bme); ssd1306_free(oled); gpio_free(gpiob); gpio_free(gpioa); rcc_free(rcc); bus_free(bus);
     return result;
 usage:
-    fprintf(stderr, "usage: %s [-n max_steps] [-t] [--vcd file] [--trace-regs file] [--gdb port] "
+    fprintf(stderr, "usage: %s [-n max_steps] [-t] [--vcd file] [--trace-regs file] [--gdb port] [--uart-rx text] [--oled-dump file] "
                     "[--temperature-centi -4000..8500] firmware.bin\n", argv[0]);
     return 2;
 }

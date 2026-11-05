@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L /* fmemopen */
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,6 +8,8 @@
 #include "periph/nvic.h"
 #include "periph/i2c.h"
 #include "periph/bme280.h"
+#include "periph/ssd1306.h"
+#include "periph/usart.h"
 
 static void put32(uint8_t *p, uint32_t v)
 { for (unsigned i = 0; i < 4; ++i) p[i] = (uint8_t)(v >> (i * 8)); }
@@ -268,9 +271,102 @@ static void test_programs(void)
     }
 }
 
+static unsigned usart_irqs;
+static void count_irq(void *ctx) { (void)ctx; ++usart_irqs; }
+static unsigned tx_count;
+static void count_tx(void *ctx, uint8_t byte) { (void)ctx; (void)byte; ++tx_count; }
+
+/* USART2 RX, RXNE/ORE/TXE interrupt requests and the CR1 bits they need. */
+static void test_usart_rx_irq(void)
+{
+    rcc_t *rcc = rcc_new();
+    gpio_t *gpioa = gpio_new("GPIOA", GPIOA_BASE, rcc, RCC_GPIOA_ENABLE_BIT);
+    usart_t *u = usart_new(rcc, gpioa);
+    bus_t *bus = bus_new();
+    assert(rcc && gpioa && u && bus);
+    assert(!bus_add_periph(bus, rcc_as_periph(rcc)) && !bus_add_periph(bus, gpio_as_periph(gpioa)) &&
+           !bus_add_periph(bus, usart_as_periph(u)));
+    usart_set_irq(u, count_irq, NULL);
+    usart_set_tx_observer(u, count_tx, NULL);
+    const uint32_t base = USART2_BASE;
+    assert(!usart_receive(u, 'x'));                       /* APB1 clock off */
+    bus_write32(bus, 0x40023840u, 1u << 17);              /* USART2EN */
+    bus_write32(bus, 0x40023830u, 1u);                    /* GPIOAEN */
+    bus_write32(bus, GPIOA_BASE + 0x00u, 0xA8000000u | (2u << 4));  /* PA2 AF */
+    bus_write32(bus, GPIOA_BASE + 0x20u, 7u << 8);       /* PA2 AF7 */
+    assert(!usart_receive(u, 'x'));                       /* UE/RE off */
+    bus_write32(bus, base + USART_CR1_OFFSET, USART_CR1_UE | USART_CR1_TE | USART_CR1_RE);
+    assert(!usart_get_stats(u).bad_accesses && usart_irqs == 0);
+    assert(usart_receive(u, 'a') && usart_irqs == 0);    /* RXNEIE off: no request */
+    assert(bus_read32(bus, base) & USART_SR_RXNE);
+    assert(!usart_receive(u, 'b'));                       /* RXNE set: held back */
+    assert(bus_read32(bus, base + USART_DR_OFFSET) == 'a');
+    assert(!(bus_read32(bus, base) & USART_SR_RXNE));
+    bus_write32(bus, base + USART_CR1_OFFSET,
+                USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE);
+    assert(usart_irqs == 0);                              /* nothing asserted yet */
+    assert(usart_receive(u, 'b') && usart_irqs == 1);
+    assert(bus_read32(bus, base + USART_DR_OFFSET) == 'b');
+    /* TXEIE with TXE already set requests at once; each DR write requests again. */
+    bus_write32(bus, base + USART_CR1_OFFSET,
+                USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | USART_CR1_RXNEIE | USART_CR1_TXEIE);
+    assert(usart_irqs == 2);
+    bus_write32(bus, base + USART_DR_OFFSET, 'z');
+    assert(usart_irqs == 3 && tx_count == 1);
+    bus_write32(bus, base + USART_CR1_OFFSET, USART_CR1_UE | USART_CR1_TE | (UINT32_C(1) << 6));
+    assert(usart_get_stats(u).bad_accesses == 1);         /* TCIE is not modeled */
+    bus_free(bus); usart_free(u); gpio_free(gpioa); rcc_free(rcc);
+    puts("PASS USART2 RX hold-back, DR read clears RXNE, RXNE/TXE interrupt requests");
+}
+
+/* SSD1306: control bytes, horizontal window, page mode, Co = 1, PBM dump. */
+static void test_ssd1306(void)
+{
+    ssd1306_t *o = ssd1306_new(0x3C);
+    assert(o);
+    i2c_device_t d = ssd1306_as_device(o);
+    const uint8_t init[] = {0x00, 0xAE, 0xA8, 0x3F, 0x20, 0x00, 0xA1, 0xC8, 0x8D, 0x14, 0xAF};
+    d.start(d.ctx, false);
+    for (unsigned i = 0; i < sizeof init; ++i) assert(d.write(d.ctx, init[i]));
+    d.stop(d.ctx);
+    assert(ssd1306_display_on(o) && !ssd1306_unknown_bytes(o));
+    /* Window columns 126..127, pages 2..3: five bytes wrap to the next page and back. */
+    const uint8_t window[] = {0x00, 0x21, 126, 127, 0x22, 2, 3};
+    d.start(d.ctx, false);
+    for (unsigned i = 0; i < sizeof window; ++i) d.write(d.ctx, window[i]);
+    d.stop(d.ctx);
+    d.start(d.ctx, false);
+    d.write(d.ctx, 0x40);
+    for (uint8_t b = 1; b <= 5; ++b) d.write(d.ctx, b);
+    d.stop(d.ctx);
+    assert(ssd1306_gddram(o, 2, 126) == 5 && ssd1306_gddram(o, 2, 127) == 2 &&
+           ssd1306_gddram(o, 3, 126) == 3 && ssd1306_gddram(o, 3, 127) == 4);
+    /* Page mode with Co = 1 pairs: B5, column 0x10 (low 0, high 1). */
+    const uint8_t page_mode[] = {0x80, 0x20, 0x80, 0x02, 0x80, 0xB5, 0x80, 0x00, 0x80, 0x11, 0xC0, 0xFF};
+    d.start(d.ctx, false);
+    for (unsigned i = 0; i < sizeof page_mode; ++i) d.write(d.ctx, page_mode[i]);
+    d.stop(d.ctx);
+    assert(ssd1306_gddram(o, 5, 0x10) == 0xFF && !ssd1306_unknown_bytes(o));
+    d.start(d.ctx, false);
+    d.write(d.ctx, 0x00); d.write(d.ctx, 0x26);           /* scroll setup: not modeled */
+    d.stop(d.ctx);
+    assert(ssd1306_unknown_bytes(o) == 1);
+    char buffer[16384];
+    FILE *f = fmemopen(buffer, sizeof buffer, "w");
+    assert(f && ssd1306_write_pbm(o, f));
+    fclose(f);
+    const char *header = "P1\n# SSD1306 GDDRAM, display on\n128 64\n";
+    assert(!strncmp(buffer, header, strlen(header)));
+    /* Pixel (0x10, 40) is page 5 bit 0. */
+    const char *rows = strstr(buffer, "128 64\n") + 7;
+    assert(rows[40 * 129 + 0x10] == '1' && rows[40 * 129 + 0x0F] == '0');
+    ssd1306_free(o);
+    puts("PASS SSD1306 control bytes, horizontal window wrap, page mode, Co=1, PBM dump");
+}
+
 int main(int argc, char **argv)
 {
-    test_nvic(); test_i2c(); test_bme(); test_msr();
+    test_nvic(); test_i2c(); test_bme(); test_msr(); test_usart_rx_irq(); test_ssd1306();
     if(argc==2 && !strcmp(argv[1],"--programs")) test_programs();
     else assert(argc==1);
     return 0;

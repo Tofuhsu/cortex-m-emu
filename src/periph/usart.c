@@ -6,16 +6,31 @@
 #define USART_SR_RESET (USART_SR_TXE | USART_SR_TC)
 #define USART_BRR_WRITABLE 0xFFFFu
 #define USART_CR1_WRITABLE 0xBFFFu
-#define USART_CR1_SUPPORTED (USART_CR1_UE | USART_CR1_TE)
+#define USART_CR1_SUPPORTED (USART_CR1_UE | USART_CR1_TE | USART_CR1_RE | \
+                             USART_CR1_RXNEIE | USART_CR1_TXEIE)
 
 struct usart {
     const rcc_t *rcc;
     const gpio_t *gpioa;
     uint32_t sr, brr, cr1;
+    uint8_t rdr;
     usart_stats_t stats;
     usart_tx_fn observer;
     void *observer_ctx;
+    usart_irq_fn irq;
+    void *irq_ctx;
 };
+
+static bool irq_asserted(const usart_t *usart)
+{
+    return ((usart->cr1 & USART_CR1_TXEIE) && (usart->sr & USART_SR_TXE)) ||
+           ((usart->cr1 & USART_CR1_RXNEIE) && (usart->sr & (USART_SR_RXNE | USART_SR_ORE)));
+}
+
+static void update_irq(usart_t *usart)
+{
+    if (usart->irq && irq_asserted(usart)) usart->irq(usart->irq_ctx);
+}
 
 static bool valid_access(uint32_t offset, int size)
 {
@@ -28,7 +43,7 @@ uint32_t usart_peek(const usart_t *usart, uint32_t offset)
 {
     switch (offset) {
     case USART_SR_OFFSET:  return usart->sr;
-    case USART_DR_OFFSET:  return 0; /* RDR is separate from TDR; no RX yet. */
+    case USART_DR_OFFSET:  return usart->rdr; /* RDR is separate from TDR. */
     case USART_BRR_OFFSET: return usart->brr;
     case USART_CR1_OFFSET: return usart->cr1;
     default:              return 0;
@@ -45,7 +60,13 @@ static uint32_t usart_read(void *ctx, uint32_t offset, int size)
     if (!rcc_apb1_clock_enabled(usart->rcc, RCC_USART2_ENABLE_BIT)) {
         return 0;
     }
-    return usart_peek(usart, offset);
+    uint32_t value = usart_peek(usart, offset);
+    if (offset == USART_DR_OFFSET) {
+        /* The SR-then-DR sequence that clears ORE is not tracked: any DR
+         * read clears RXNE and ORE. */
+        usart->sr &= ~(USART_SR_RXNE | USART_SR_ORE);
+    }
+    return value;
 }
 
 static void usart_write(void *ctx, uint32_t offset, uint32_t value, int size)
@@ -77,6 +98,7 @@ static void usart_write(void *ctx, uint32_t offset, uint32_t value, int size)
             return;
         }
         usart->cr1 = control;
+        update_irq(usart);
         return;
     }
     case USART_DR_OFFSET:
@@ -95,11 +117,10 @@ static void usart_write(void *ctx, uint32_t offset, uint32_t value, int size)
         usart->sr |= USART_SR_TXE | USART_SR_TC;
         if (!gpio_pin_is_af(usart->gpioa, 2u, 7u)) {
             usart->stats.pin_mismatch_bytes++;
-            return;
-        }
-        if (usart->observer) {
+        } else if (usart->observer) {
             usart->observer(usart->observer_ctx, (uint8_t)(value & 0xFFu));
         }
+        update_irq(usart);
         return;
     }
 }
@@ -124,7 +145,27 @@ void usart_reset(usart_t *usart)
     usart->sr = USART_SR_RESET;
     usart->brr = 0;
     usart->cr1 = 0;
+    usart->rdr = 0;
     usart->stats = (usart_stats_t){0};
+}
+
+void usart_set_irq(usart_t *usart, usart_irq_fn fn, void *ctx)
+{
+    usart->irq = fn;
+    usart->irq_ctx = ctx;
+}
+
+bool usart_receive(usart_t *usart, uint8_t byte)
+{
+    if (!rcc_apb1_clock_enabled(usart->rcc, RCC_USART2_ENABLE_BIT) ||
+        (usart->cr1 & (USART_CR1_UE | USART_CR1_RE)) != (USART_CR1_UE | USART_CR1_RE) ||
+        (usart->sr & USART_SR_RXNE)) {
+        return false;
+    }
+    usart->rdr = byte;
+    usart->sr |= USART_SR_RXNE;
+    update_irq(usart);
+    return true;
 }
 
 void usart_free(usart_t *usart)
