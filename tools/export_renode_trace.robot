@@ -4,6 +4,8 @@ Library             OperatingSystem
 *** Variables ***
 ${BIN}              ${EMPTY}
 ${REPL}             ${EMPTY}
+# Optional C# peripheral model the platform file needs (loaded with include).
+${MODEL}            ${EMPTY}
 ${OUT}              ${OUTPUT DIR}/renode.csv
 ${STEPS}            100
 
@@ -13,6 +15,7 @@ Export Register Snapshots
     ...                Stops BEFORE BKPT (Renode stepping BKPT differs); no silent state normalization.
     Should Not Be Empty    ${BIN}
     Should Not Be Empty    ${REPL}
+    Run Keyword If    '${MODEL}' != ''    Execute Command    include @${MODEL}
     Execute Command    mach create "trace"
     Execute Command    machine LoadPlatformDescription @${REPL}
     Execute Command    sysbus LoadBinary @${BIN} 0x08000000

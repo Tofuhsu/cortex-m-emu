@@ -79,6 +79,8 @@ def main():
         parser.error('--firmware-steps must be positive')
     firmware = args.firmware_repo.resolve()
     platform = firmware / 'renode/stm32f446_nucleo.repl'
+    # The firmware platform replaces I2C1 with a patched model it ships as C#.
+    model = firmware / 'renode/STM32F4_I2C_AckModel.cs'
     sources = sorted((root / 'tests/progs').glob('[0-9][0-9]_*.s'))
     prefixes = load_prefixes(args.prefixes, {source.stem for source in sources})
     # Preflight before any rebuild. Do not destroy the owner's current build.
@@ -137,6 +139,7 @@ def main():
                     raise RuntimeError('firmware did not execute the complete requested prefix')
             run([renode_command, root / 'tools/export_renode_trace.robot',
                  '--variable', f'BIN:{image}', '--variable', f'REPL:{platform}',
+                 '--variable', f'MODEL:{model if model.is_file() else ""}',
                  '--variable', f'OUT:{right}', '--variable', f'STEPS:{steps}'],
                 folder / 'renode.log', folder)
             other = read_trace(right)
