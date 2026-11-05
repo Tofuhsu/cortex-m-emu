@@ -10,7 +10,7 @@ struct gpio {
     uint32_t base;
     const rcc_t *rcc;
     unsigned enable_bit;
-    uint32_t moder, otyper, ospeedr, pupdr;
+    uint32_t moder, otyper, ospeedr, pupdr, afrl;
     uint16_t idr, odr;
     uint64_t gated_writes, bad_accesses;
     gpio_odr_change_fn observer;
@@ -26,7 +26,7 @@ static bool valid_access(uint32_t offset, int size)
         return false;
     }
     uint32_t reg = offset & ~3u;
-    if (reg > GPIO_BSRR_OFFSET) {
+    if (reg > GPIO_BSRR_OFFSET && reg != GPIO_AFRL_OFFSET) {
         return false;
     }
     /* RM0390 specifies word-only accesses to IDR. */
@@ -67,6 +67,7 @@ static uint32_t gpio_read(void *ctx, uint32_t offset, int size)
     case GPIO_IDR_OFFSET:     value = gpio->idr; break;
     case GPIO_ODR_OFFSET:     value = gpio->odr; break;
     case GPIO_BSRR_OFFSET:    value = 0; break;
+    case GPIO_AFRL_OFFSET:    value = gpio->afrl; break;
     }
     return (value >> (8u * (offset & 3u))) & width_mask(size);
 }
@@ -98,6 +99,9 @@ static void gpio_write(void *ctx, uint32_t offset, uint32_t value, int size)
         break;
     case GPIO_PUPDR_OFFSET:
         gpio->pupdr = (gpio->pupdr & ~mask) | command;
+        break;
+    case GPIO_AFRL_OFFSET:
+        gpio->afrl = (gpio->afrl & ~mask) | command;
         break;
     case GPIO_IDR_OFFSET:
         /* Read-only: a valid write has no effect. */
@@ -145,6 +149,7 @@ void gpio_reset(gpio_t *gpio)
     gpio->otyper = 0;
     gpio->ospeedr = 0x0C000000u; /* RM0390 Rev 9, section 7.4.3 (GPIOA). */
     gpio->pupdr = 0x64000000u;
+    gpio->afrl = 0; /* RM0390 7.4.9. */
     gpio->idr = 0; /* Deterministic model default; hardware reset is undefined. */
     gpio->odr = 0;
     gpio->gated_writes = 0;
@@ -171,6 +176,15 @@ periph_t gpio_as_periph(gpio_t *gpio)
 uint16_t gpio_get_odr(const gpio_t *gpio)
 {
     return gpio->odr;
+}
+
+bool gpio_pin_is_af(const gpio_t *gpio, unsigned pin, unsigned af)
+{
+    if (!gpio || pin >= 8u || af >= 16u) {
+        return false;
+    }
+    return ((gpio->moder >> (2u * pin)) & 3u) == 2u &&
+           ((gpio->afrl >> (4u * pin)) & 15u) == af;
 }
 
 uint64_t gpio_gated_write_count(const gpio_t *gpio)

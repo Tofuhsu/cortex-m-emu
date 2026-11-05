@@ -2,6 +2,7 @@
 #ifndef PERIPH_GPIO_H
 #define PERIPH_GPIO_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "bus.h"
@@ -15,6 +16,7 @@
 #define GPIO_IDR_OFFSET     0x10u
 #define GPIO_ODR_OFFSET     0x14u
 #define GPIO_BSRR_OFFSET    0x18u
+#define GPIO_AFRL_OFFSET    0x20u
 
 typedef struct gpio gpio_t;
 
@@ -30,6 +32,10 @@ periph_t gpio_as_periph(gpio_t *gpio);
 
 /* Host-side inspection bypasses clock gating. */
 uint16_t gpio_get_odr(const gpio_t *gpio);
+/* Inspect saved MODER/AFRL, bypassing bus clock gating. Pins 0-7 only;
+ * unsupported pins/AF numbers return false. AFRH is not modeled yet.
+ */
+bool gpio_pin_is_af(const gpio_t *gpio, unsigned pin, unsigned af);
 uint64_t gpio_gated_write_count(const gpio_t *gpio);
 uint64_t gpio_bad_access_count(const gpio_t *gpio);
 
