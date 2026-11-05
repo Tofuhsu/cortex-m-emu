@@ -26,10 +26,14 @@ $(BUILD)/progs/%.bin: tests/progs/%.s tests/progs/vectors.inc | $(BUILD)/progs
 	$(LD) -Ttext=0x08000000 -o $(BUILD)/progs/$*.elf $(BUILD)/progs/$*.o
 	$(OBJCOPY) -O binary $(BUILD)/progs/$*.elf $@
 
+$(BUILD)/test_instructions: tests/test_instructions.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
+	$(CC) $(CFLAGS) tests/test_instructions.c $(LIB_SRC) -o $@
+
 $(BUILD)/test_extended: tests/test_extended.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
 	$(CC) $(CFLAGS) tests/test_extended.c $(LIB_SRC) -o $@
 
-test: $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
+test: $(BUILD)/test_instructions $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
+	./$(BUILD)/test_instructions
 	./$(BUILD)/test_runner
 	./$(BUILD)/test_extended --programs
 	python3 tests/test_trace_tools.py
@@ -43,6 +47,7 @@ clean:
 
 # Host-only checks do not rebuild ARM assembly and do not imply target acceptance.
 .PHONY: test-host
-test-host: $(BUILD)/test_extended
+test-host: $(BUILD)/test_instructions $(BUILD)/test_extended
+	./$(BUILD)/test_instructions
 	./$(BUILD)/test_extended
 	python3 tests/test_trace_tools.py

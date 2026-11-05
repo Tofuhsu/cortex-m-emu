@@ -378,6 +378,29 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* ADD (register) T2, DDI0403E.e A7.7.4 (A7-192), including the
+     * SP aliases in A7.7.6 (A7-196). 0x44xx and MOV's 0x46xx are disjoint.
+     * A5.1.3 (A5-127): writing nonzero SP[1:0] is UNPREDICTABLE.
+     */
+    if ((insn & 0xFF00u) == 0x4400u) {
+        unsigned rd = (insn & 0x07u) | ((insn >> 4) & 0x08u);
+        unsigned rm = (insn >> 3) & 0x0Fu;
+        if (rd == PC && rm == PC) {
+            cpu_halt(cpu, "UNPREDICTABLE ADD with both operands PC at 0x%08x", pc);
+            return;
+        }
+        uint32_t left = rd == PC ? pc + 4u : cpu->r[rd];
+        uint32_t right = rm == PC ? pc + 4u : cpu->r[rm];
+        uint32_t result = left + right;
+        if (rd == SP && (result & 3u) != 0) {
+            cpu_halt(cpu, "UNPREDICTABLE ADD to unaligned SP at 0x%08x", pc);
+            return;
+        }
+        /* ALUWritePC/BranchWritePC, like MOV PC, not BX interworking. */
+        cpu->r[rd] = rd == PC ? result & ~1u : result;
+        return;
+    }
+
     /* MOV (register) T1: 01000110 D Rm(4) Rd(3). Flags unchanged. */
     if ((insn & 0xFF00u) == 0x4600u) {
         unsigned rd = (insn & 0x07u) | ((insn >> 4) & 0x08u);
