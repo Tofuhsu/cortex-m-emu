@@ -15,6 +15,10 @@
 #define PC 15
 
 #define CPU_EXCEPTION_SYSTICK 15u
+#define CPU_EXCEPTION_COUNT 256u
+#define CPU_EXTERNAL_IRQ_COUNT 240u
+
+typedef bool (*cpu_irq_enabled_fn)(void *ctx, unsigned irq);
 
 typedef void (*cpu_step_hook_fn)(void *ctx);
 typedef void (*cpu_trace_fn)(void *ctx, uint32_t pc, uint16_t first_halfword);
@@ -24,7 +28,9 @@ typedef struct {
     bool n, z, c, v;     /* APSR condition flags */
     bool primask;        /* Configurable-priority exception mask; reset = 0 */
     uint16_t ipsr;       /* 0 = Thread mode; otherwise active exception number */
-    uint32_t pending_exceptions; /* bit N = exception N pending */
+    uint32_t pending_exceptions[8]; /* coalesced exception bits, including IRQ 38+16 */
+    cpu_irq_enabled_fn irq_enabled;
+    void *irq_enabled_ctx;
     uint64_t steps;      /* instructions executed */
     bool halted;
     char halt_reason[128];
@@ -49,9 +55,12 @@ void cpu_set_step_hook(cpu_t *cpu, cpu_step_hook_fn hook, void *ctx);
  */
 void cpu_set_trace_hook(cpu_t *cpu, cpu_trace_fn trace, void *ctx);
 
-/* Only SysTick (15) is accepted in this milestone. Requests coalesce.
- * Pending is acknowledged only after successful entry from Thread mode.
+/* SysTick and external exceptions 16..255 coalesce. External IRQs require an
+ * installed enable query. Acknowledged only after successful Thread-mode entry.
  */
+void cpu_set_irq_gate(cpu_t *cpu, cpu_irq_enabled_fn query, void *ctx);
+bool cpu_clear_pending_exception(cpu_t *cpu, unsigned number);
+uint32_t cpu_get_xpsr(const cpu_t *cpu);
 bool cpu_pend_exception(cpu_t *cpu, unsigned number);
 bool cpu_exception_pending(const cpu_t *cpu, unsigned number);
 

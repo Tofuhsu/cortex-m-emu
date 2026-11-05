@@ -45,19 +45,37 @@ void cpu_set_trace_hook(cpu_t *cpu, cpu_trace_fn trace, void *ctx)
     cpu->trace_hook_ctx = ctx;
 }
 
+void cpu_set_irq_gate(cpu_t *cpu, cpu_irq_enabled_fn query, void *ctx)
+{
+    cpu->irq_enabled = query;
+    cpu->irq_enabled_ctx = ctx;
+}
+
+static bool valid_pending(unsigned number)
+{
+    return number == CPU_EXCEPTION_SYSTICK ||
+           (number >= 16u && number < CPU_EXCEPTION_COUNT);
+}
+
 bool cpu_pend_exception(cpu_t *cpu, unsigned number)
 {
-    if (number != CPU_EXCEPTION_SYSTICK) {
-        return false;
-    }
-    cpu->pending_exceptions |= UINT32_C(1) << number;
+    if (!valid_pending(number)) return false;
+    cpu->pending_exceptions[number / 32u] |= UINT32_C(1) << (number % 32u);
+    return true;
+}
+
+bool cpu_clear_pending_exception(cpu_t *cpu, unsigned number)
+{
+    if (!valid_pending(number)) return false;
+    cpu->pending_exceptions[number / 32u] &= ~(UINT32_C(1) << (number % 32u));
     return true;
 }
 
 bool cpu_exception_pending(const cpu_t *cpu, unsigned number)
 {
-    return number == CPU_EXCEPTION_SYSTICK &&
-           (cpu->pending_exceptions & (UINT32_C(1) << number)) != 0;
+    return valid_pending(number) &&
+           (cpu->pending_exceptions[number / 32u] &
+            (UINT32_C(1) << (number % 32u))) != 0;
 }
 
 /* Interpret a 32-bit two's-complement bit pattern without an out-of-range signed cast. */
@@ -115,7 +133,7 @@ static bool condition_passed(const cpu_t *cpu, unsigned cond)
 #define EXC_RETURN_THREAD_MSP UINT32_C(0xFFFFFFF9)
 
 /* Only NZCV, Thumb state and IPSR are modeled; IT/ICI and FP state are absent. */
-static uint32_t pack_xpsr(const cpu_t *cpu)
+uint32_t cpu_get_xpsr(const cpu_t *cpu)
 {
     return ((uint32_t)cpu->n << 31) | ((uint32_t)cpu->z << 30)
          | ((uint32_t)cpu->c << 29) | ((uint32_t)cpu->v << 28)
@@ -145,7 +163,7 @@ static bool exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
     }
 
     uint32_t frame_sp = (old_sp - 32u) & ~7u;
-    uint32_t psr = pack_xpsr(cpu);
+    uint32_t psr = cpu_get_xpsr(cpu);
     if ((old_sp & 4u) != 0) {
         psr |= XPSR_STACK_PAD;
     }
@@ -598,6 +616,16 @@ static bool thumb_expand_imm(uint16_t imm12, bool carry_in, thumb_imm_t *expande
 
 static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t hw2)
 {
+    /* MSR PRIMASK T1, ARM ARM B5.2.3. Needed by the I2C driver's
+     * save/restore critical windows; this core is privileged only.
+     */
+    if ((hw1 & 0xFFF0u) == 0xF380u && hw2 == 0x8810u) {
+        unsigned rn = hw1 & 0x0Fu;
+        if (rn == SP || rn == PC) cpu_halt(cpu, "UNPREDICTABLE MSR PRIMASK register");
+        else cpu->primask = (cpu->r[rn] & 1u) != 0;
+        return;
+    }
+
     /* MRS T1: 1111 0011 1110 1111 / 1000 Rd SYSm. */
     if (hw1 == 0xF3EFu && (hw2 & 0xF000u) == 0x8000u) {
         unsigned rd = (hw2 >> 8) & 0x0Fu;
@@ -723,19 +751,24 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
         return -1;
     }
 
-    /* Defer asynchronous exceptions while in a handler: no nesting yet.
-     * Save the unexecuted instruction's address, not the SVC pc+2 address.
-     * SHPR3/NVIC priority arbitration remains future work.
+    /* Deliberate first milestone: no nesting, priority registers stored only.
+     * Lowest exception number wins; PRIMASK masks entry, not pending sources.
+     * A dispatched handler executes its first instruction in this same step.
      */
-    if (cpu->ipsr == 0 && !cpu->primask &&
-        cpu_exception_pending(cpu, CPU_EXCEPTION_SYSTICK)) {
-        if (!exception_enter(cpu, bus, CPU_EXCEPTION_SYSTICK, cpu->r[PC])) {
-            if (bus_fault(bus)) {
-                cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+    uint32_t any_pending = 0;
+    for (unsigned i = 0; i < 8; ++i) any_pending |= cpu->pending_exceptions[i];
+    if (any_pending && cpu->ipsr == 0 && !cpu->primask) {
+        for (unsigned number = CPU_EXCEPTION_SYSTICK; number < CPU_EXCEPTION_COUNT; ++number) {
+            if (!cpu_exception_pending(cpu, number)) continue;
+            if (number >= 16u && (!cpu->irq_enabled ||
+                !cpu->irq_enabled(cpu->irq_enabled_ctx, number - 16u))) continue;
+            if (!exception_enter(cpu, bus, number, cpu->r[PC])) {
+                if (bus_fault(bus)) cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+                return -1;
             }
-            return -1; /* No instruction fetched, step counted or hook called. */
+            cpu_clear_pending_exception(cpu, number);
+            break;
         }
-        cpu->pending_exceptions &= ~(UINT32_C(1) << CPU_EXCEPTION_SYSTICK);
     }
 
     uint32_t pc = cpu->r[PC];
