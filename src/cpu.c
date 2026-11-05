@@ -33,6 +33,33 @@ void cpu_reset(cpu_t *cpu, bus_t *bus)
     }
 }
 
+void cpu_set_step_hook(cpu_t *cpu, cpu_step_hook_fn hook, void *ctx)
+{
+    cpu->step_hook = hook;
+    cpu->step_hook_ctx = ctx;
+}
+
+void cpu_set_trace_hook(cpu_t *cpu, cpu_trace_fn trace, void *ctx)
+{
+    cpu->trace_hook = trace;
+    cpu->trace_hook_ctx = ctx;
+}
+
+bool cpu_pend_exception(cpu_t *cpu, unsigned number)
+{
+    if (number != CPU_EXCEPTION_SYSTICK) {
+        return false;
+    }
+    cpu->pending_exceptions |= UINT32_C(1) << number;
+    return true;
+}
+
+bool cpu_exception_pending(const cpu_t *cpu, unsigned number)
+{
+    return number == CPU_EXCEPTION_SYSTICK &&
+           (cpu->pending_exceptions & (UINT32_C(1) << number)) != 0;
+}
+
 /* Interpret a 32-bit two's-complement bit pattern without an out-of-range signed cast. */
 static int64_t signed32(uint32_t value)
 {
@@ -96,25 +123,25 @@ static uint32_t pack_xpsr(const cpu_t *cpu)
 }
 
 /* Basic frame on MSP, with fixed STKALIGN=1 and vector-table base=0. */
-static void exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
+static bool exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
                              uint32_t return_address)
 {
     if (cpu->ipsr != 0) {
         cpu_halt(cpu, "nested exception entry not implemented");
-        return;
+        return false;
     }
     uint32_t old_sp = cpu->r[SP];
     if ((old_sp & 3u) != 0) {
         cpu_halt(cpu, "exception entry with unaligned SP 0x%08x", old_sp);
-        return;
+        return false;
     }
     uint32_t handler = bus_read32(bus, number * 4u);
     if (bus_fault(bus)) {
-        return;
+        return false;
     }
     if ((handler & 1u) == 0) {
         cpu_halt(cpu, "exception %u vector 0x%08x has Thumb bit clear", number, handler);
-        return;
+        return false;
     }
 
     uint32_t frame_sp = (old_sp - 32u) & ~7u;
@@ -129,7 +156,7 @@ static void exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
     for (unsigned i = 0; i < 8; i++) {
         bus_write32(bus, frame_sp + 4u * i, frame[i]);
         if (bus_fault(bus)) {
-            return;
+            return false;
         }
     }
     /* Commit core state after successful transfers. Padding is not written. */
@@ -137,6 +164,7 @@ static void exception_enter(cpu_t *cpu, bus_t *bus, unsigned number,
     cpu->r[LR] = EXC_RETURN_THREAD_MSP;
     cpu->ipsr = (uint16_t)number;
     cpu->r[PC] = handler & ~1u;
+    return true;
 }
 
 static void exception_return(cpu_t *cpu, bus_t *bus, uint32_t target)
@@ -437,7 +465,7 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
 
     /* SVC T1: 1101 1111 imm8. Stack the NEXT instruction, not pc+4. */
     if ((insn & 0xFF00u) == 0xDF00u) {
-        exception_enter(cpu, bus, 11u, pc + 2u);
+        (void)exception_enter(cpu, bus, 11u, pc + 2u);
         return;
     }
 
@@ -633,6 +661,20 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
         return -1;
     }
 
+    /* Defer asynchronous exceptions while in a handler: no nesting yet.
+     * Save the unexecuted instruction's address, not the SVC pc+2 address.
+     * PRIMASK/CPS and SHPR3/NVIC priority arbitration remain future work.
+     */
+    if (cpu->ipsr == 0 && cpu_exception_pending(cpu, CPU_EXCEPTION_SYSTICK)) {
+        if (!exception_enter(cpu, bus, CPU_EXCEPTION_SYSTICK, cpu->r[PC])) {
+            if (bus_fault(bus)) {
+                cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
+            }
+            return -1; /* No instruction fetched, step counted or hook called. */
+        }
+        cpu->pending_exceptions &= ~(UINT32_C(1) << CPU_EXCEPTION_SYSTICK);
+    }
+
     uint32_t pc = cpu->r[PC];
     uint16_t hw1 = bus_read16(bus, pc);
     if (bus_fault(bus)) {
@@ -642,12 +684,19 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
 
     /* ARM ARM A5.1: prefixes 11101, 11110 and 11111 start 32-bit instructions. */
     unsigned prefix = hw1 >> 11;
-    if (prefix == 0x1Du || prefix == 0x1Eu || prefix == 0x1Fu) {
-        uint16_t hw2 = bus_read16(bus, pc + 2u);
+    bool wide = prefix == 0x1Du || prefix == 0x1Eu || prefix == 0x1Fu;
+    uint16_t hw2 = 0;
+    if (wide) {
+        hw2 = bus_read16(bus, pc + 2u);
         if (bus_fault(bus)) {
             cpu_halt(cpu, "bus fault: %s", bus_fault_msg(bus));
             return -1;
         }
+    }
+    if (cpu->trace_hook) {
+        cpu->trace_hook(cpu->trace_hook_ctx, pc, hw1);
+    }
+    if (wide) {
         cpu->r[PC] = pc + 4u;
         exec32(cpu, bus, pc, hw1, hw2);
     } else {
@@ -665,5 +714,8 @@ int cpu_step(cpu_t *cpu, bus_t *bus)
         cpu->r[PC] = pc;
     }
     cpu->steps++;
+    if (cpu->step_hook) {
+        cpu->step_hook(cpu->step_hook_ctx);
+    }
     return cpu->halted ? -1 : 0;
 }
