@@ -728,6 +728,59 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         return;
     }
 
+    /* B<cond> T3, A7.7.12 (A7-205): raw J2/J1 bits, unlike BL.
+     * Conditions 14/15 belong to other encodings. MRS/MSR decode above.
+     */
+    if ((hw1 & 0xF800u) == 0xF000u && (hw2 & 0xD000u) == 0x8000u &&
+        ((hw1 >> 6) & 15u) < 14u) {
+        unsigned cond = (hw1 >> 6) & 15u;
+        if (condition_passed(cpu, cond)) {
+            uint32_t displacement = ((uint32_t)(hw1 & 0x0400u) << 10)
+                | ((uint32_t)(hw2 & 0x0800u) << 8)
+                | ((uint32_t)(hw2 & 0x2000u) << 5)
+                | ((uint32_t)(hw1 & 0x003Fu) << 12)
+                | ((uint32_t)(hw2 & 0x07FFu) << 1);
+            if (displacement & 0x00100000u) displacement |= 0xFFE00000u;
+            cpu->r[PC] = pc + 4u + displacement;
+        }
+        return;
+    }
+
+    /* LSR register T2: only LSR of this family is implemented this round.
+     * Register shift uses its low BYTE; zero is genuinely zero here.
+     */
+    if ((hw1 & 0xFFE0u) == 0xFA20u && (hw2 & 0xF0F0u) == 0xF000u) {
+        unsigned rn = hw1 & 15u, rd = (hw2 >> 8) & 15u, rm = hw2 & 15u;
+        if (rn == SP || rn == PC || rd == SP || rd == PC || rm == SP || rm == PC) {
+            cpu_halt(cpu, "UNPREDICTABLE LSR register operand at 0x%08x", pc);
+            return;
+        }
+        shift_result_t result = lsr_c(cpu->r[rn], cpu->r[rm] & 255u, cpu->c);
+        cpu->r[rd] = result.value;
+        if (hw1 & 0x10u) { set_nz(cpu, result.value); cpu->c = result.carry; }
+        return;
+    }
+
+    /* MUL T2 and UDIV T1. The second-halfword masks exclude MLA and
+     * adjacent multiply/divide operations. SP/PC operands are forbidden.
+     */
+    bool multiply = (hw1 & 0xFFF0u) == 0xFB00u && (hw2 & 0xF0F0u) == 0xF000u;
+    bool divide = (hw1 & 0xFFF0u) == 0xFBB0u && (hw2 & 0xF0F0u) == 0xF0F0u;
+    if (multiply || divide) {
+        unsigned rn = hw1 & 15u, rd = (hw2 >> 8) & 15u, rm = hw2 & 15u;
+        if (rn == SP || rn == PC || rd == SP || rd == PC || rm == SP || rm == PC) {
+            cpu_halt(cpu, "UNPREDICTABLE multiply/divide register at 0x%08x", pc);
+            return;
+        }
+        /* DDI0403E.e A4.4.6/B3.2.8: DIV_0_TRP resets to 0. This model
+         * keeps that fixed reset policy; SCB/CCR configuration is absent.
+         * A zero divisor must never reach the host C division operator.
+         */
+        cpu->r[rd] = multiply ? cpu->r[rn] * cpu->r[rm]
+                            : cpu->r[rm] == 0 ? 0 : cpu->r[rn] / cpu->r[rm];
+        return; /* No NZCV changes. */
+    }
+
     /* BL T1: 11110 S imm10 / 11 J1 1 J2 imm11. */
     if ((hw1 & 0xF800u) == 0xF000u && (hw2 & 0xD000u) == 0xD000u) {
         uint32_t s = (hw1 >> 10) & 1u;
@@ -762,6 +815,27 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         return;
     }
 
+    /* LDR literal T2, A7.7.44: recognize BOTH U=0 and U=1 before the
+     * generic imm12 load/store family. PC operand is instruction+4, aligned.
+     */
+    if ((hw1 & 0xFF7Fu) == 0xF85Fu) {
+        unsigned rt = (hw2 >> 12) & 15u;
+        if (rt == PC) {
+            cpu_halt(cpu, "LDR literal T2 to PC not implemented at 0x%08x", pc);
+            return;
+        }
+        uint32_t base = (pc + 4u) & ~3u;
+        uint32_t offset = hw2 & 0x0FFFu;
+        uint32_t address = hw1 & 0x0080u ? base + offset : base - offset;
+        if (rt == SP) {
+            uint32_t value = bus_read32(bus, address);
+            if (bus_fault(bus)) return;
+            if (value & 3u) cpu_halt(cpu, "UNPREDICTABLE LDR literal to unaligned SP at 0x%08x", pc);
+            else cpu->r[SP] = value;
+        } else transfer_memory(cpu, bus, rt, address, 4, true);
+        return;
+    }
+
     /* STR.W/LDR.W/LDRB.W with an unscaled, unsigned imm12 byte offset. */
     unsigned memory_op = hw1 & 0xFFF0u;
     if (memory_op == 0xF8C0u || memory_op == 0xF8D0u || memory_op == 0xF890u) {
@@ -788,39 +862,59 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         unsigned op = (hw1 >> 5) & 0x0Fu;
         unsigned rn = hw1 & 0x0Fu;
         unsigned rd = (hw2 >> 8) & 0x0Fu;
-        if ((hw1 & 0x10u) != 0) {
-            cpu_halt(cpu, "modified-immediate S=1 not implemented at 0x%08x", pc);
-            return;
-        }
-        if (op != 0x0u && op != 0x1u && op != 0x2u && op != 0x4u) {
+        bool setflags = (hw1 & 0x10u) != 0;
+        bool arithmetic = op == 8u || op == 13u || op == 14u;
+        bool compare = setflags && rd == PC && (op == 8u || op == 13u);
+        bool sp_alias = rn == SP && (op == 8u || op == 13u);
+        if (op != 0u && op != 1u && op != 2u && op != 3u && op != 4u && !arithmetic) {
             cpu_halt(cpu, "modified-immediate op 0x%x not implemented at 0x%08x", op, pc);
             return;
         }
-        if (rd == SP || rd == PC || rn == SP || (rn == PC && op != 0x2u)) {
+        if (setflags && !arithmetic) {
+            cpu_halt(cpu, "logical modified-immediate S=1 not implemented at 0x%08x", pc);
+            return;
+        }
+        if (op == 3u && rn != PC) {
+            cpu_halt(cpu, "ORN immediate not implemented at 0x%08x", pc);
+            return;
+        }
+        /* CMP/CMN aliases must be recognized before rejecting Rd=PC.
+         * ADD/SUB SP aliases are supported; RSB and logical SP uses are not.
+         */
+        if ((rd == PC && !compare) || (rd == SP && !sp_alias) ||
+            (rn == SP && !sp_alias) || (rn == PC && op != 2u && op != 3u)) {
             cpu_halt(cpu, "UNPREDICTABLE modified-immediate register encoding at 0x%08x", pc);
             return;
         }
         uint16_t imm12 = (uint16_t)((((hw1 >> 10) & 1u) << 11)
-                                 | (((hw2 >> 12) & 0x07u) << 8)
-                                 | (hw2 & 0xFFu));
+                                 | (((hw2 >> 12) & 7u) << 8) | (hw2 & 0xFFu));
         thumb_imm_t immediate;
         if (!thumb_expand_imm(imm12, cpu->c, &immediate)) {
-            cpu_halt(cpu, "UNPREDICTABLE modified immediate 0x%03x at 0x%08x",
-                     (unsigned)imm12, pc);
+            cpu_halt(cpu, "UNPREDICTABLE modified immediate 0x%03x at 0x%08x", (unsigned)imm12, pc);
             return;
         }
         uint32_t result;
-        if (op == 0x0u) {
-            result = cpu->r[rn] & immediate.value; /* AND.W */
-        } else if (op == 0x1u) {
-            result = cpu->r[rn] & ~immediate.value; /* BIC.W */
-        } else if (op == 0x2u) {
-            result = rn == PC ? immediate.value : cpu->r[rn] | immediate.value; /* MOV.W / ORR.W */
-        } else {
-            result = cpu->r[rn] ^ immediate.value; /* EOR.W */
+        bool carry = cpu->c, overflow = cpu->v;
+        switch (op) {
+        case 0u: result = cpu->r[rn] & immediate.value; break;
+        case 1u: result = cpu->r[rn] & ~immediate.value; break;
+        case 2u: result = rn == PC ? immediate.value : cpu->r[rn] | immediate.value; break;
+        case 3u: result = ~immediate.value; break; /* MVN alias only. */
+        case 4u: result = cpu->r[rn] ^ immediate.value; break;
+        case 8u: result = add_with_carry(cpu->r[rn], immediate.value, false, &carry, &overflow); break;
+        case 13u: result = add_with_carry(cpu->r[rn], ~immediate.value, true, &carry, &overflow); break;
+        case 14u: result = add_with_carry(~cpu->r[rn], immediate.value, true, &carry, &overflow); break;
+        default: return; /* All allocated cases were checked above. */
         }
-        cpu->r[rd] = result;
-        /* S=0 preserves NZCV. immediate.carry is available for future S=1 support. */
+        if (!compare && rd == SP && (result & 3u)) {
+            cpu_halt(cpu, "UNPREDICTABLE immediate arithmetic to unaligned SP at 0x%08x", pc);
+            return;
+        }
+        if (!compare) cpu->r[rd] = result;
+        if (setflags) {
+            set_nz(cpu, result);
+            cpu->c = carry; cpu->v = overflow; /* NEVER immediate.carry for arithmetic. */
+        }
         return;
     }
 

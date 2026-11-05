@@ -33,7 +33,7 @@ $(BUILD)/test_extended: tests/test_extended.c $(LIB_SRC) src/*.h src/periph/*.h 
 	$(CC) $(CFLAGS) tests/test_extended.c $(LIB_SRC) -o $@
 
 test: $(BUILD)/test_instructions $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
-	./$(BUILD)/test_instructions
+	./$(BUILD)/test_instructions --programs
 	./$(BUILD)/test_runner
 	./$(BUILD)/test_extended --programs
 	python3 tests/test_trace_tools.py
