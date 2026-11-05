@@ -1,5 +1,5 @@
 @ Preserve an outer disabled critical section, then explicitly restore zero.
-@ ARM ARM B5.2.3. No flag changes. Renode comparison pending.
+@ ARM ARM B5.2.3. No flag changes. Matches Renode 1.17 single-step.
 .include "vectors.inc"
 _start:
     cpsid i

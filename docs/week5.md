@@ -6,7 +6,7 @@
 
 Timestamps are executed-instruction step numbers. VCD requires a timescale; the file declares `1 ns`, but **one step is not one nanosecond**. A header comment states this. Multiple callbacks can share a timestamp. These vectors cannot be decoded as physical UART TX or I2C SCL/SDA by a serial decoder and say nothing about electrical behavior.
 
-The writer uses stable IDs and no wall-clock date or file path. Tests rerun the same USART/I2C binary, compare bytes, parse declarations/value widths, and verify received data and ACK. `tools/check_vcd.py` checks this project's emitted subset, not the entire IEEE language. Real PulseView/GTKWave loading and a screenshot are still pending; a parser result is not claimed as viewer acceptance.
+The writer uses stable IDs and no wall-clock date or file path. Tests rerun the same USART/I2C binary, compare bytes, parse declarations/value widths, and verify received data and ACK. `tools/check_vcd.py` checks this project's emitted subset, not the entire IEEE language. The output opens in Surfer 0.7.0; screenshots are in `docs/img/`. A final timestamp one step after the last instruction lets the viewer draw the last change.
 
 ```sh
 ./build/cortex-m-emu --vcd build/i2c.vcd build/progs/22_i2c_chip_id.bin
@@ -28,11 +28,11 @@ python3 tools/compare_traces.py emu.csv renode.csv --steps 6 \
 
 ## Renode exporter and boundaries
 
-`tools/export_renode_trace.robot` is intended for `renode-test`, using BIN, REPL, OUT and STEPS variables. It loads the identical binary, sets SP/PC from its vector table, and declares common GP/NZCV-zero preconditions because those reset values are architecturally unspecified. LR remains at Renode's reset value and is handled only by the explicit allowlist. `cpu Step` and public register access are used; see [Renode testing API](https://renode.readthedocs.io/en/latest/basic/renode-testing-api.html) and [execution tracing](https://renode.readthedocs.io/en/latest/execution-tracing/execution-tracing.html). Renode also supports execution traces, but their normal PC/opcode format is not a complete post-step register snapshot.
+`tools/export_renode_trace.robot` is intended for `renode-test`, using BIN, REPL, OUT and STEPS variables. It loads the identical binary, sets VTOR to flash and starts single-step mode so Renode takes SP/PC from the vector table, and declares common GP/NZCV-zero preconditions because those reset values are architecturally unspecified. LR remains at Renode's reset value and is handled only by the explicit allowlist. `cpu Step` and public register access are used; see [Renode testing API](https://renode.readthedocs.io/en/latest/basic/renode-testing-api.html) and [execution tracing](https://renode.readthedocs.io/en/latest/execution-tracing/execution-tracing.html). Renode also supports execution traces, but their normal PC/opcode format is not a complete post-step register snapshot.
 
 The exporter stops before BKPT because Renode single-step BKPT behavior differs. Thus test 01, consisting only of BKPT, needs a reset-only state check and cannot honestly be advertised as a nonzero-instruction differential run. For the other programs compare an explicit pre-BKPT prefix. SysTick's virtual-time scheduling differs from instruction ticks: select and document a common pre-interrupt prefix, not an unexplained register mask. GPIO clock-gating/BSRR differences need per-program, evidence-based rules if included.
 
-The exporter and full Renode matrix have **not** run in this environment. Renode is unavailable. Do not describe local emulator-vs-emulator equality as a Renode result.
+Stepping runs inside Renode (`tools/renode_step_dump.py`), so a 20000-step firmware trace takes seconds. The full matrix has been run against Renode 1.17; results and the explained differences are in [renode_differences.md](renode_differences.md).
 
 ## Comparator mutation test
 

@@ -1,5 +1,5 @@
 @ RM0390 Table 38: USART2 IRQ38 => exception54. PM0214 4.3 ISER/ISPR.
-@ Register expectations are checked by test_extended.c; Renode comparison pending.
+@ Register expectations are checked by test_extended.c; matches Renode up to IRQ entry (docs/renode_differences.md).
 .syntax unified
 .cpu cortex-m4
 .thumb

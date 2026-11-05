@@ -62,7 +62,7 @@ Tests read calibration/raw bytes through I2C and run independent full Bosch inte
 
 At unchanged reset PCLK1=16 MHz, standard-mode CCR=16,000,000/(2*100,000)=80; TRISE=16+1=17 and CR2.FREQ=16. PA5 scheduling uses a recurring SysTick deadline so I2C/UART work does not accumulate delay drift, provided service work completes within a period. This is not a real-time guarantee.
 
-Target GCC compilation, missing-instruction discovery, new PA5 interval measurements and Renode/Robot verification are **pending**. Do not substitute host C tests for those checks. See `acceptance.md`.
+The firmware builds with ARM GCC (`-O0`, 3592 bytes of text) and runs on the emulator; measured PA5 intervals and the Renode/Robot results are in `acceptance.md`.
 
 ## J: prediction recorded before the new target binary is run
 
@@ -88,4 +88,4 @@ immediately and transitions can bunch up; if PRIMASK is held long enough to
 coalesce SysTick requests, software ticks lag and physical instruction
 intervals can grow. Neither effect is fixed by absolute deadlines. The first
 transition has startup phase and initialization costs and must be reported
-separately. Actual J measurements remain pending the new ELF/bin/disassembly.
+separately. Measured result (`acceptance.md`): after the first interval, intervals alternate 8,002,010 / 7,997,988 instructions at 2500, and each pair sums to about 16,000,000.
