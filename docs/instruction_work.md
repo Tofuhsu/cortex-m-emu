@@ -20,3 +20,13 @@ Program 24 checks high registers and SP while preserving a known NZCV state.
 
 Direct-opcode C tests are unit checks. They do not substitute for GNU assembly
 of the .s files or real Renode traces; those remain pending in this environment.
+
+## I2–I4 and shared helpers
+
+DDI0403E.e A7.7.9 (A7-201) supplies AND's implicit LSL0; A7.7.119
+(A7-341) supplies NEG/RSB flags; A7.4.2 (A7-183) distinguishes the zero
+immediate encodings. Arithmetic/shift helpers are grouped near AddWithCarry.
+Logical operations preserve C/V; NEG uses AddWithCarry. Immediate ASR and the
+other byte-extension instructions are intentionally left unsupported. Program
+25 checks NEG zero/INT_MIN; 26 checks LSL0/LSR32/carry; 27 checks UXTB while
+preserving flags. Direct tests cover all low register fields and initial flags.

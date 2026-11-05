@@ -105,6 +105,31 @@ static uint32_t add_with_carry(uint32_t x, uint32_t y, bool carry_in, bool *carr
     return result;
 }
 
+/* Keep pure arithmetic/shift helpers together. DDI0403E.e A7.4.2 and
+ * shared Shift_C pseudocode: do not evaluate a C shift by 32 or more.
+ */
+typedef struct { uint32_t value; bool carry; } shift_result_t;
+
+static void set_nz(cpu_t *cpu, uint32_t value)
+{
+    cpu->n = (value >> 31) != 0;
+    cpu->z = value == 0;
+}
+
+static shift_result_t lsl_c(uint32_t value, unsigned amount, bool carry_in)
+{
+    if (amount == 0) return (shift_result_t){value, carry_in};
+    if (amount < 32) return (shift_result_t){value << amount, ((value >> (32u - amount)) & 1u) != 0};
+    return (shift_result_t){0, amount == 32 && (value & 1u) != 0};
+}
+
+static shift_result_t lsr_c(uint32_t value, unsigned amount, bool carry_in)
+{
+    if (amount == 0) return (shift_result_t){value, carry_in};
+    if (amount < 32) return (shift_result_t){value >> amount, ((value >> (amount - 1u)) & 1u) != 0};
+    return (shift_result_t){0, amount == 32 && (value >> 31) != 0};
+}
+
 /* ARM ARM A7.3: the 14 conditions used by B<cond> T1. */
 static bool condition_passed(const cpu_t *cpu, unsigned cond)
 {
@@ -291,6 +316,32 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* LSLS/LSRS immediate T1. LSL #0 is MOVS register T2, preserving C;
+     * the zero LSR immediate encodes 32, not zero (A7.4.2 DecodeImmShift).
+     * ASR immediate is deliberately still unsupported.
+     */
+    if ((insn & 0xF800u) == 0 || (insn & 0xF800u) == 0x0800u) {
+        unsigned rd = insn & 7u;
+        unsigned rm = (insn >> 3) & 7u;
+        unsigned amount = (insn >> 6) & 31u;
+        bool right = (insn & 0x0800u) != 0;
+        if (right && amount == 0) amount = 32;
+        shift_result_t result = right ? lsr_c(cpu->r[rm], amount, cpu->c)
+                                      : lsl_c(cpu->r[rm], amount, cpu->c);
+        cpu->r[rd] = result.value;
+        set_nz(cpu, result.value);
+        cpu->c = result.carry; /* V is unchanged. */
+        return;
+    }
+
+    /* UXTB T1: 10110010 11 Rm Rd. Other extension opcodes remain unsupported. */
+    if ((insn & 0xFFC0u) == 0xB2C0u) {
+        unsigned rd = insn & 7u;
+        unsigned rm = (insn >> 3) & 7u;
+        cpu->r[rd] = cpu->r[rm] & 0xFFu;
+        return;
+    }
+
     /* SUBS (register) T1: 0001101 Rm Rn Rd, outside IT blocks. */
     if ((insn & 0xFE00u) == 0x1A00u) {
         unsigned rd = insn & 0x07u;
@@ -363,18 +414,27 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         unsigned rm = (insn >> 3) & 0x07u;
         unsigned rn = insn & 0x07u;
         uint32_t result;
-        if (op == 0xAu) { /* CMP (register) T1: no register writeback. */
-            result = add_with_carry(cpu->r[rn], ~cpu->r[rm], true,
-                                    &cpu->c, &cpu->v);
-        } else if (op == 0xCu) { /* ORRS (register) T1: C and V unchanged. */
-            result = cpu->r[rn] | cpu->r[rm];
+        switch (op) {
+        case 0x0u: /* ANDS T1 has implicit LSL #0: C/V unchanged. */
+            result = cpu->r[rn] & cpu->r[rm]; cpu->r[rn] = result; break;
+        case 0x1u: /* EORS T1. */
+            result = cpu->r[rn] ^ cpu->r[rm]; cpu->r[rn] = result; break;
+        case 0x9u: /* RSBS immediate T1 (#0), alias NEGS. */
+            result = add_with_carry(~cpu->r[rm], 0, true, &cpu->c, &cpu->v);
             cpu->r[rn] = result;
-        } else {
+            break;
+        case 0xAu: /* CMP register: flags only. */
+            result = add_with_carry(cpu->r[rn], ~cpu->r[rm], true, &cpu->c, &cpu->v);
+            break;
+        case 0xCu: /* ORRS T1. */
+            result = cpu->r[rn] | cpu->r[rm]; cpu->r[rn] = result; break;
+        case 0xFu: /* MVNS T1, implicit LSL #0. */
+            result = ~cpu->r[rm]; cpu->r[rn] = result; break;
+        default:
             cpu_halt(cpu, "undefined 16-bit instruction 0x%04x at 0x%08x", insn, pc);
             return;
         }
-        cpu->n = (result >> 31) != 0;
-        cpu->z = result == 0;
+        set_nz(cpu, result);
         return;
     }
 
