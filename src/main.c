@@ -5,6 +5,8 @@
  *     -n  stop after this many instructions (default 1000000)
  *     -t  print each instruction's address and first halfword before it executes
  *         (after any pending exception has been taken, so it shows what really runs)
+ *     --gdb port  wait for arm-none-eabi-gdb on 127.0.0.1:port (0 = any free port);
+ *         the debugger controls execution and -n is ignored
  */
 #include <errno.h>
 #include <limits.h>
@@ -24,6 +26,7 @@
 #include "periph/nvic.h"
 #include "periph/bme280.h"
 #include "vcd.h"
+#include "gdbstub.h"
 
 typedef struct { cpu_t *cpu; vcd_t *vcd; } observer_t;
 
@@ -114,12 +117,18 @@ int main(int argc, char **argv)
     int trace = 0;
     int32_t temperature = 2500;
     const char *path = NULL, *vcd_path = NULL, *regs_path = NULL;
+    long gdb_port = -1;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-n") == 0 && i + 1 < argc) {
             if (!unsigned_arg(argv[++i], &max_steps)) goto usage;
         } else if (strcmp(argv[i], "-t") == 0) trace = 1;
         else if (strcmp(argv[i], "--vcd") == 0 && i + 1 < argc) vcd_path = argv[++i];
         else if (strcmp(argv[i], "--trace-regs") == 0 && i + 1 < argc) regs_path = argv[++i];
+        else if (strcmp(argv[i], "--gdb") == 0 && i + 1 < argc) {
+            unsigned long long value;
+            if (!unsigned_arg(argv[++i], &value) || value > 65535) goto usage;
+            gdb_port = (long)value;
+        }
         else if (strcmp(argv[i], "--temperature-centi") == 0 && i + 1 < argc) {
             char *end; errno = 0;
             long value = strtol(argv[++i], &end, 10);
@@ -186,10 +195,14 @@ int main(int argc, char **argv)
     gpio_set_observer(gpioa, observe_pa5, &observer);
     usart_set_tx_observer(usart2, print_usart_byte, &observer);
     i2c_set_observer(i2c, observe_i2c, &observer);
-    while (!cpu.halted && cpu.steps < max_steps) {
-        uint64_t before = cpu.steps;
-        cpu_step(&cpu, bus);
-        if (regs && cpu.steps != before) trace_registers(regs, &cpu);
+    if (gdb_port >= 0) {
+        if (gdbstub_serve(&cpu, bus, (uint16_t)gdb_port) != 0) goto cleanup;
+    } else {
+        while (!cpu.halted && cpu.steps < max_steps) {
+            uint64_t before = cpu.steps;
+            cpu_step(&cpu, bus);
+            if (regs && cpu.steps != before) trace_registers(regs, &cpu);
+        }
     }
     vcd_end(vcd, cpu.steps + 1u);
     printf("stopped: %s\n", cpu.halted ? cpu.halt_reason : "step limit reached");
@@ -227,7 +240,7 @@ cleanup:
     i2c_free(i2c); bme280_free(bme); gpio_free(gpiob); gpio_free(gpioa); rcc_free(rcc); bus_free(bus);
     return result;
 usage:
-    fprintf(stderr, "usage: %s [-n max_steps] [-t] [--vcd file] [--trace-regs file] "
+    fprintf(stderr, "usage: %s [-n max_steps] [-t] [--vcd file] [--trace-regs file] [--gdb port] "
                     "[--temperature-centi -4000..8500] firmware.bin\n", argv[0]);
     return 2;
 }

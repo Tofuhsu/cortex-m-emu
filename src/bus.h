@@ -52,6 +52,13 @@ void bus_write8(bus_t *bus, uint32_t addr, uint8_t value);
 bool bus_fault(const bus_t *bus);
 const char *bus_fault_msg(const bus_t *bus);
 
+/*
+ * Debugger access to one byte of flash or SRAM: no peripheral side effects,
+ * no fault, and flash is writable (like a programmer). Returns false for any
+ * other address.
+ */
+bool bus_debug_byte(bus_t *bus, uint32_t addr, uint8_t *byte, bool write);
+
 /* Accesses to the peripheral/system region with no model registered. */
 uint32_t bus_unmapped_count(const bus_t *bus);
 uint32_t bus_last_unmapped_addr(const bus_t *bus);

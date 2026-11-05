@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -O2 -g -Isrc
-LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c
+LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c src/gdbstub.c
 BUILD   := build
 
 # Test programs are assembled with the ARM toolchain and linked at the start of flash.
@@ -38,6 +38,7 @@ test: $(BUILD)/test_instructions $(BUILD)/test_extended $(BUILD)/test_runner $(B
 	./$(BUILD)/test_extended --programs
 	python3 tests/test_trace_tools.py
 	python3 tests/test_cli.py
+	python3 tests/test_gdbstub.py
 
 $(BUILD) $(BUILD)/progs:
 	mkdir -p $@

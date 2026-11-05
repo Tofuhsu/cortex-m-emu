@@ -164,6 +164,16 @@ void bus_write32(bus_t *bus, uint32_t addr, uint32_t value) { bus_write(bus, add
 void bus_write16(bus_t *bus, uint32_t addr, uint16_t value) { bus_write(bus, addr, value, 2); }
 void bus_write8(bus_t *bus, uint32_t addr, uint8_t value) { bus_write(bus, addr, value, 1); }
 
+bool bus_debug_byte(bus_t *bus, uint32_t addr, uint8_t *byte, bool write)
+{
+    bool is_flash;
+    uint8_t *mem = memory_ptr(bus, addr, 1, &is_flash);
+    if (!mem) return false;
+    if (write) *mem = *byte;
+    else *byte = *mem;
+    return true;
+}
+
 bool bus_fault(const bus_t *bus) { return bus->fault; }
 const char *bus_fault_msg(const bus_t *bus) { return bus->fault_msg; }
 uint32_t bus_unmapped_count(const bus_t *bus) { return bus->unmapped_count; }
