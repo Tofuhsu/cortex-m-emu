@@ -12,12 +12,13 @@ python3 tools/run_trace_matrix.py --firmware-repo ../stm32-baremetal-sensor-node
 
 The matrix reassembles every program with GNU as and rebuilds the firmware. For each case it compares the emulator's register trace with a Renode single-step trace after every instruction.
 
-Renode runs on the firmware repo's board file, `renode/stm32f446_nucleo.repl`. That file replaces I2C1 with `renode/STM32F4_I2C_AckModel.cs`, a patched copy of Renode's I2C model (see [the last section](#patched-i2c1-model)). The exporter loads that C# file with `include`. Results with the stock model are given where they differ.
+Renode runs on the firmware repo's board file, `renode/stm32f446_nucleo.repl`. That file replaces I2C1 with `renode/STM32F4_I2C_AckModel.cs`, a patched copy of Renode's I2C model (see [the last section](#patched-i2c1-model)). The exporter loads that C# file with `include` and sets `i2c1ack InstantTransfers true`, so each I2C byte completes at once, as it does in the emulator; without it Renode completes a byte one byte period later in virtual time and flag-polling loops run a different number of times. The Robot tests keep Renode's default timing. Results with default timing and with the stock model are given where they differ.
 
 Comparison rules:
 - Only one known difference is allowed: reset LR (`0xFFFFFFFF` in the emulator, `0` in Renode), listed in `tools/reset_lr_allowlist.json`.
 - Programs run up to, but not including, BKPT.
 - Three programs are compared over a shorter prefix. Each prefix and its reason is in `tools/trace_prefixes.json`.
+- The SysTick blink firmware (firmware commit `6151eed`, before the BME280 driver) is compared up to its first SysTick entry, which the tool finds from the emulator trace (`--blink-ref`).
 
 | Case | Instructions compared | Result |
 | --- | ---: | --- |
@@ -29,8 +30,9 @@ Comparison rules:
 | 19 NVIC software pend | 4 (prefix) | Match up to IRQ entry |
 | 11 GPIOA | 17 | 1 difference at step 17 |
 | 21 GPIOB | 12 | 1 difference at step 12 |
-| 22 I2C chip ID | 60 | Differs from step 35 (stock model: from step 28) |
-| Firmware, first 20000 steps | 20000 | Identical for 1018 steps; differs from step 1019 (stock model: identical for 764 steps) |
+| 22 I2C chip ID | 60 | Match (default timing: differs from step 35; stock model: from step 28) |
+| Blink firmware `6151eed`, up to the first SysTick entry | 16439 | Match (entry is step 16440) |
+| BME280 firmware, first 20000 steps | 20000 | Identical for 2027 steps; differs from step 2028 (default timing: 1018 steps; stock model: 764 steps) |
 
 A mutation check confirms the comparison can catch a wrong flag. `tools/test_negs_against_renode.py` flips the C flag of NEGS in a temporary build. Compared against Renode's trace of program 25, the unmodified emulator matches all six steps, and the mutant is caught at step 6: xPSR is `0x41000000` in the mutant and `0x61000000` in Renode.
 
@@ -40,10 +42,8 @@ A mutation check confirms the comparison can catch a wrong flag. `tools/test_neg
 - **19: step that records exception entry.** Renode records IRQ entry in the same step as the ISPR store that pends it. The emulator records it in the same step as the first handler instruction. From step 6 on, both traces agree again, including the return.
 - **11: BSRR set and reset together.** RM0390 says set wins when both bits are written. The emulator reads back ODR = 0x20; Renode reads back 0.
 - **21: AFRH byte write.** Renode's GPIO ignores a byte store to AFRH; a word store of the same value reads back correctly. RM0390 allows byte access to GPIO registers. The emulator stores the byte. The firmware writes AFRH with a word store, so it is not affected.
-- **22 and firmware: BTF timing.**
-  - At step 35 of program 22, the program waits for BTF after writing the register byte. The emulator completes the byte at once and reads SR1 = 0x84 (TxE and BTF); Renode sets BTF one byte period later in virtual time and reads 0x80. The program polls one more time in Renode.
-  - The firmware's first difference, step 1019, is the same wait in the BME280 driver.
-  - Both poll flags instead of counting cycles, so they read the same chip ID (0x60). This is a timing difference of the kind this emulator does not model; it is not hidden by a prefix.
+- **BME280 firmware: sensor calibration data.** Step 2028 is the first calibration byte read from I2C DR. The emulator's BME280 model returns 0xC0 (its declared synthetic calibration, T1 = 24000); Renode's model returns 0x00 (its fixed calibration, T1 = T2 = 0x8000, T3 = 0, `BME280.cs` line 174). The two sensor models hold different constants, so the compensation arithmetic differs from here on. Both print `temperature: 25.00`. This is a difference in the sensor models' data, not in instruction execution.
+- **22 and firmware with default Renode timing: BTF timing.** Without `InstantTransfers`, program 22 waits for BTF at step 35: the emulator reads SR1 = 0x84 at once, Renode reads 0x80 until one byte period has passed, so it polls once more. The BME280 firmware's step 1019 is the same wait.
 - **22 with the stock model: SR1 after the address byte.**
   - At step 28, stock Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only).
   - RM0390 Rev 9 §24.6.6 (p768) says TxE is not set during the address phase, and Figure 275 in §24.3.3 (p752) shows TxE = 1 at EV8_1, after ADDR is cleared. The emulator and the patched model follow this: TxE is set when ADDR is cleared.
