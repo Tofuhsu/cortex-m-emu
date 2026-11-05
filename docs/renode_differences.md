@@ -39,7 +39,9 @@ A mutation check confirms the comparison can catch a wrong flag. `tools/test_neg
 - **11: BSRR set and reset together.** RM0390 says set wins when both bits are written. The emulator reads back ODR = 0x20; Renode reads back 0.
 - **21: AFRH byte write.** Renode's GPIO ignores a byte store to AFRH; a word store of the same value reads back correctly. RM0390 allows byte access to GPIO registers. The emulator stores the byte. The firmware writes AFRH with a word store, so it is not affected.
 - **22: SR1 after the address byte, and BTF timing.**
-  - At step 28, Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only). Whether TxE is already set at EV6 on hardware is still to be checked against RM0390; if it is, the emulator's model is incomplete here.
+  - At step 28, Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only).
+  - RM0390 Rev 9 §24.6.6 (p768) says TxE is not set during the address phase, and Figure 275 in §24.3.3 (p752) shows TxE = 1 at EV8_1, after ADDR is cleared. The emulator follows this: it sets TxE when ADDR is cleared.
+  - The manual does not list every flag combination at each register read, so this does not prove that 0x82 cannot be read on hardware. The difference stays in the matrix.
   - After that point, BTF arrives later in Renode, so the number of polling iterations differs.
   - The program polls flags instead of counting cycles, so it reads the same chip ID (0x60) in both.
 - **Firmware: I2C1 CR1.ACK.** Step 765 is the first `read32(CR1) | START` in the BME280 driver. The emulator reads 0x401 (PE and ACK); Renode reads 0x1, because its I2C model does not store ACK (see below).

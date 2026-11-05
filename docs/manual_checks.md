@@ -3,26 +3,27 @@
 These are source checks, not Renode execution results. Page numbers are printed
 page labels. RM0390 full-PDF fetches exceeded the retrieval limit; its indexed
 ST-hosted sections were checked individually. Some indexed URLs retain Rev7;
-do not silently treat their page numbers as Rev9. The remaining Rev9 page checks
-are called out below rather than guessed.
+do not silently treat their page numbers as Rev9. Rows that still cite Rev7
+say so.
 
 ## Register locators
 
 | Item | Checked value | Primary locator |
 | --- | --- | --- |
 | NVIC bank bases | ISER E000E100, ICER E180, ISPR E200, ICPR E280, IABR E300, IPR E400 | PM0214 Rev10 4.3.1 p208; 4.3.2–7 pp210–215 |
-| USART2 vector | IRQ38, exception54, vector offset D8 | RM0390 Rev7 table38 p238; Rev9 page confirmation pending |
+| USART2 vector | IRQ38, exception54, vector offset D8 | RM0390 Rev9 table38 p237 |
 | GPIOB base | 40020400 | RM0390 table1 p58, Rev7 and Rev9 |
 | GPIOB MODER reset | 00000280 | RM0390 Rev9 7.4.1 p185 |
 | GPIOB OSPEEDR/PUPDR reset | 000000C0 / 00000100 | RM0390 Rev9 7.4.3–4 p186 |
 | GPIOA OSPEEDR reset | 0C000000 | RM0390 Rev9 7.4.3 p186 |
 | BSRR conflict | set wins; reads return0 | RM0390 Rev9 7.4.7 note p188 |
-| AFRH | offset24, reset0 | RM0390 7.4.10; Rev9 table26 p192 confirms map; section page pending |
+| AFRH | offset24, reset0 | RM0390 Rev9 7.4.10 p189; table26 p192 confirms map |
 | PB8/PB9 | AF4 I2C1 SCL/SDA | DS10693 Rev11 table11 p59 |
 | APB1ENR | offset40, reset0, I2C1EN bit21 | RM0390 Rev9 6.3.13 p145 |
 | AHB1ENR reset | 00000000 | RM0390 Rev7 6.3.10 p143; model's existing reset0 is correct |
 | I2C CR1/CR2 | offsets00/04; PE0, START8, STOP9, ACK10, POS11; FREQ[5:0] | RM0390 24.6.1–2; Rev9 contents pp762/764; bit text retrieved in Rev7 |
 | I2C DR/SR1 | offsets10/14; SB0 ADDR1 BTF2 RXNE6 TXE7 AF10 | RM0390 Rev9 24.6.5–6 p766 |
+| I2C TxE at address phase | "TxE is not set during address phase"; TxE=1 at EV8_1, after ADDR is cleared | RM0390 Rev9 24.6.6 p768; 24.3.3 figure275 p752 |
 | I2C SR2 | offset18; MSL0 BUSY1 TRA2 | RM0390 24.6.7, Rev9 contents p769; indexed bit table checked |
 | I2C CCR/TRISE | offsets1C/20 | RM0390 24.6.8–9, Rev9 contents pp770–771; formula text also checked in Rev7 pp771–772 |
 | BME280 identity/calibration | D0=60; T1/T2/T3 at88–8D | Bosch revision1.24 5.4.1 p27; 4.2.2 table16 p24 |

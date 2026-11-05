@@ -52,5 +52,5 @@ Two runs of each command give byte-identical files. The VCD ends with a timestam
 
 ## Not yet done
 
-- Whether TxE is set together with ADDR at EV6 (program 22 difference): check against RM0390.
+- Program 22 SR1 at EV6: RM0390 Rev 9 says TxE is not set during the address phase, which matches the emulator, but does not rule out Renode's 0x82 on hardware. A board read would settle it (see renode_differences.md).
 - Hardware runs. Nothing here has been verified on a real board.
