@@ -72,6 +72,9 @@ def main():
     parser.add_argument('--renode-test', default=os.environ.get('RENODE_TEST', 'renode-test'))
     parser.add_argument('--out', type=Path, default=root / 'build/trace-matrix')
     parser.add_argument('--firmware-steps', type=int, default=20000)
+    parser.add_argument('--blink-ref', default='6151eed',
+                        help='firmware commit with the SysTick blink and UART banner, compared up to '
+                             'its first SysTick entry; empty string skips it')
     parser.add_argument('--prefixes', type=Path, default=root / 'tools/trace_prefixes.json',
                         help='JSON of explicit program prefix steps and reasons; no inferred truncation')
     args = parser.parse_args()
@@ -103,6 +106,30 @@ def main():
     # Force actual GNU reassembly, rather than reusing ZIP checkpoint fixtures.
     run(['make', '-B', 'all', 'progs'], output / 'emu-build.log', root)
     run(['make', '-B'], output / 'firmware-build.log', firmware)
+    blink = output / 'blink-src'
+    if args.blink_ref:
+        run(['git', '-C', firmware, 'worktree', 'add', '--detach', blink, args.blink_ref],
+            output / 'blink-worktree.log', root)
+    try:
+        return run_cases(args, root, firmware, platform, model, sources, prefixes, output,
+                         renode_command, blink if args.blink_ref else None)
+    finally:
+        if args.blink_ref:
+            subprocess.run(['git', '-C', str(firmware), 'worktree', 'remove', '--force', str(blink)],
+                           check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def first_exception_step(binary, image, folder, limit=200000):
+    """Step of the first exception entry in the emulator (IPSR != 0), or None."""
+    probe = folder / 'probe.csv'
+    run([binary, '-n', limit, '--trace-regs', probe, image], folder / 'probe.log', folder)
+    for row in read_trace(probe):
+        if row['xpsr'] & 0x1FF:
+            return row['step']
+    return None
+
+
+def run_cases(args, root, firmware, platform, model, sources, prefixes, output, renode_command, blink):
     binary = root / 'build/cortex-m-emu'
     rules_path = root / 'tools/reset_lr_allowlist.json'
     rules = read_allowlist(rules_path)
@@ -110,12 +137,27 @@ def main():
             (rules[0]['emu'], rules[0]['renode']) != (0xFFFFFFFF, 0):
         raise RuntimeError('matrix permits only the exact reset-LR allowlist')
     cases = [(source.stem, root / f'build/progs/{source.stem}.bin',
-              prefixes.get(source.stem, {}).get('steps')) for source in sources]
-    cases.append(('firmware-prefix', firmware / 'build/firmware.bin', args.firmware_steps))
+              prefixes.get(source.stem, {}).get('steps'), platform, model) for source in sources]
+    cases.append(('firmware-prefix', firmware / 'build/firmware.bin', args.firmware_steps,
+                  platform, model))
+    if blink is not None:
+        run(['make', '-B'], output / 'blink-build.log', blink)
+        image = blink / 'build/firmware.bin'
+        probe_dir = output / 'blink-probe'
+        probe_dir.mkdir()
+        entry_step = first_exception_step(binary, image, probe_dir)
+        if entry_step is None or entry_step < 2:
+            raise RuntimeError('blink firmware took no exception within the probe limit')
+        # Compare every instruction before the step that enters the first SysTick handler.
+        prefixes['blink-firmware'] = {
+            'steps': entry_step - 1,
+            'reason': f'{args.blink_ref}, up to the first SysTick entry (step {entry_step})'}
+        cases.append(('blink-firmware', image, entry_step - 1, blink / 'renode/stm32f446_nucleo.repl',
+                      blink / 'renode/STM32F4_I2C_AckModel.cs'))
     report = {'kind': 'actual-emulator-versus-Renode; no synthetic traces',
               'allowlist_sha256': sha(rules_path), 'platform_sha256': sha(platform),
               'cases': []}
-    for name, image, prefix in cases:
+    for name, image, prefix, case_platform, case_model in cases:
         folder = output / name
         folder.mkdir()
         entry = {'case': name, 'image_sha256': sha(image), 'status': 'ERROR'}
@@ -138,8 +180,11 @@ def main():
                 if len(snapshots) != steps + 1 or 'step limit reached' not in log:
                     raise RuntimeError('firmware did not execute the complete requested prefix')
             run([renode_command, root / 'tools/export_renode_trace.robot',
-                 '--variable', f'BIN:{image}', '--variable', f'REPL:{platform}',
-                 '--variable', f'MODEL:{model if model.is_file() else ""}',
+                 '--variable', f'BIN:{image}', '--variable', f'REPL:{case_platform}',
+                 '--variable', f'MODEL:{case_model if case_model.is_file() else ""}',
+                 # The emulator completes I2C transfers at once; make the patched
+                 # Renode model do the same so polling loops run the same count.
+                 '--variable', f'AFTER_LOAD:{"sysbus.i2c1ack InstantTransfers true" if case_model.is_file() else ""}',
                  '--variable', f'OUT:{right}', '--variable', f'STEPS:{steps}'],
                 folder / 'renode.log', folder)
             other = read_trace(right)

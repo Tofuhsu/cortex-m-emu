@@ -6,6 +6,8 @@ ${BIN}              ${EMPTY}
 ${REPL}             ${EMPTY}
 # Optional C# peripheral model the platform file needs (loaded with include).
 ${MODEL}            ${EMPTY}
+# Optional monitor command run after the platform is loaded.
+${AFTER_LOAD}       ${EMPTY}
 ${OUT}              ${OUTPUT DIR}/renode.csv
 ${STEPS}            100
 
@@ -18,6 +20,7 @@ Export Register Snapshots
     Run Keyword If    '${MODEL}' != ''    Execute Command    include @${MODEL}
     Execute Command    mach create "trace"
     Execute Command    machine LoadPlatformDescription @${REPL}
+    Run Keyword If    '${AFTER_LOAD}' != ''    Execute Command    ${AFTER_LOAD}
     Execute Command    sysbus LoadBinary @${BIN} 0x08000000
     # Without VTOR at flash and an explicit start, the first Step resets from
     # address 0 (SP = 0) and enters HardFault before the first instruction.
