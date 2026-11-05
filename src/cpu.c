@@ -273,6 +273,19 @@ static void exec16(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t insn)
         return;
     }
 
+    /* SUBS (register) T1: 0001101 Rm Rn Rd, outside IT blocks. */
+    if ((insn & 0xFE00u) == 0x1A00u) {
+        unsigned rd = insn & 0x07u;
+        unsigned rn = (insn >> 3) & 0x07u;
+        unsigned rm = (insn >> 6) & 0x07u;
+        uint32_t result = add_with_carry(cpu->r[rn], ~cpu->r[rm], true,
+                                         &cpu->c, &cpu->v);
+        cpu->r[rd] = result;
+        cpu->n = (result >> 31) != 0;
+        cpu->z = result == 0;
+        return;
+    }
+
     /* ADDS (immediate) T1: 0001110 imm3 Rn Rd. */
     if ((insn & 0xFE00u) == 0x1C00u) {
         unsigned rd = insn & 0x07u;
@@ -609,6 +622,21 @@ static void exec32(cpu_t *cpu, bus_t *bus, uint32_t pc, uint16_t hw1, uint16_t h
         }
         cpu->r[LR] = (pc + 4u) | 1u;
         cpu->r[PC] = pc + 4u + (uint32_t)offset;
+        return;
+    }
+
+    /* MOVW, MOV (immediate) T3: 11110 i 10 0100 imm4 / 0 imm3 Rd imm8. */
+    if ((hw1 & 0xFBF0u) == 0xF240u && (hw2 & 0x8000u) == 0) {
+        unsigned rd = (hw2 >> 8) & 0x0Fu;
+        if (rd == SP || rd == PC) {
+            cpu_halt(cpu, "UNPREDICTABLE MOVW Rd=%u at 0x%08x", rd, pc);
+            return;
+        }
+        uint32_t imm16 = ((uint32_t)(hw1 & 0x0Fu) << 12)
+                       | ((uint32_t)(hw1 & 0x0400u) << 1)
+                       | ((uint32_t)(hw2 & 0x7000u) >> 4)
+                       | (hw2 & 0x00FFu);
+        cpu->r[rd] = imm16; /* Zero-extend; preserve all NZCV flags. */
         return;
     }
 
