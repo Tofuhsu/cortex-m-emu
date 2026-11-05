@@ -38,6 +38,10 @@ class CLIOutputs(unittest.TestCase):
             self.assertEqual([(s,v) for s,n,v in changes if n == 'pa5'], [(0,0),(12,1),(14,0),(16,1)])
             self.assertTrue(trace.read_text().startswith('step,pc,r0,'))
             self.assertEqual(len(trace.read_text().splitlines()), 20) # header, reset, 18 instructions
+            # End marker one step after the last instruction, so the final PA5
+            # change at step 16 has nonzero width in a viewer.
+            stamps = [int(l[1:]) for l in path.read_text().splitlines() if l.startswith('#')]
+            self.assertEqual(stamps[-1], 19)
 
     def test_i2c_vcd_keeps_final_nacked_byte_at_stop(self):
         with tempfile.TemporaryDirectory() as d:
@@ -51,6 +55,8 @@ class CLIOutputs(unittest.TestCase):
             self.assertEqual([v for _,n,v in changes if n == 'i2c_data'], [0,0xEC,0xD0,0xED,0x60])
             self.assertEqual([v for _,n,v in changes if n == 'i2c_ack'][-1],0)
             self.assertIn(1,[v for _,n,v in changes if n == 'i2c_repeated_start'])
+            stamps = [int(l[1:]) for l in paths[0].read_text().splitlines() if l.startswith('#')]
+            self.assertGreater(stamps[-1], max(s for s,_,_ in changes))
 
     def test_rejects_bad_arguments_and_unwritable_output(self):
         image = ROOT / 'build/progs/01_reset.bin'

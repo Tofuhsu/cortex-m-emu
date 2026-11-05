@@ -73,6 +73,13 @@ void vcd_i2c(vcd_t *v, uint64_t step, i2c_event_t event)
     vector(v, 32, ++v->i2c_count, "I");
 }
 
+/* Final timestamp after the last executed instruction. Without it the last
+ * value change has zero width, and viewers cannot draw it. */
+void vcd_end(vcd_t *v, uint64_t step)
+{
+    if (v && !v->failed && step > v->last_step) timestamp(v, step);
+}
+
 bool vcd_close(vcd_t *v)
 {
     if (!v) return true;

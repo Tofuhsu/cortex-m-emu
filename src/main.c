@@ -191,6 +191,7 @@ int main(int argc, char **argv)
         cpu_step(&cpu, bus);
         if (regs && cpu.steps != before) trace_registers(regs, &cpu);
     }
+    vcd_end(vcd, cpu.steps + 1u);
     printf("stopped: %s\n", cpu.halted ? cpu.halt_reason : "step limit reached");
     dump_registers(&cpu);
     if (bus_unmapped_count(bus)) printf("note: %u unmapped accesses (last 0x%08x)\n",
