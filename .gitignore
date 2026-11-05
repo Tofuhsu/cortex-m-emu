@@ -1,2 +1,6 @@
 build/
 .DS_Store
+
+# Python trace tooling
+__pycache__/
+*.pyc
