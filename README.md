@@ -1,9 +1,9 @@
 # cortex-m-emu
 
 An instruction-set emulator for the Arm Cortex-M4 (ARMv7-M, Thumb/Thumb-2), written in C11.
-Goal: run my own bare-metal STM32F446 firmware (a separate project, not yet public) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
+Goal: run my own bare-metal STM32F446 firmware ([stm32-baremetal-sensor-node](https://github.com/Tofuhsu/stm32-baremetal-sensor-node)) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
 
-**Status:** Week 4 of 5. All 33 test programs (`tests/progs/`, assembled with GNU as) and the host model tests pass. New since week 3: external NVIC interrupts, GPIOB, a polling I2C1 master, a BME280 model, VCD output, a register-trace compare tool and the extra Thumb/Thumb-2 instructions the sensor firmware needs. The BME280 firmware (`-O0`) runs on the emulator and prints `temperature: 25.00` and `temperature: 30.50` for the matching sensor inputs. In Renode 1.17, 30 of 33 programs match instruction by instruction, including every new instruction (program 01 is checked at reset only, and three are compared over documented prefixes); the differences are explained in [docs/renode_differences.md](docs/renode_differences.md).
+**Status:** All five weeks of the plan are done. All 33 test programs (`tests/progs/`, assembled with GNU as) and the host model tests pass. New since week 3: external NVIC interrupts, GPIOB, a polling I2C1 master, a BME280 model, VCD output, a register-trace compare tool and the extra Thumb/Thumb-2 instructions the sensor firmware needs. The BME280 firmware (`-O0`) runs on the emulator and prints `temperature: 25.00` and `temperature: 30.50` for the matching sensor inputs. In Renode 1.17, 30 of 33 programs match instruction by instruction, including every new instruction (program 01 is checked at reset only, and three are compared over documented prefixes); the differences are explained in [docs/renode_differences.md](docs/renode_differences.md). The comparison uses the firmware repo's Renode board file, which replaces I2C1 with a patched copy of Renode's model; results with the stock model are recorded there too. Week 5 also added a GDB remote stub: `arm-none-eabi-gdb` can break, continue, single-step and read registers and memory on the emulator.
 
 Historical measurements are retained: the first busy-wait blink (`-O0`, 500,000 iterations) toggled PA5 every 3,500,022–3,500,024 instructions. The later UART/SysTick blink (RVR=15999, 500 ticks) had steady intervals of 7,999,995–8,000,004 instructions. With the BME280 firmware, PA5 intervals alternate between 8,002,010 and 7,997,988 instructions (25.00 °C input); each pair sums to about 16,000,000. The longer interval includes the sensor read and UART print after the LED turns off. Conditions: `-O0`, RVR = 15999, 500 ticks per half-period, one tick per instruction. Counts are instructions, not time.
 
@@ -18,6 +18,8 @@ make test-host # host-only model tests, no ARM toolchain needed
 ./build/cortex-m-emu --trace-regs regs.csv build/progs/03_adds_subs.bin
 # BME280 input in hundredths Celsius; default 2500:
 ./build/cortex-m-emu --temperature-centi 3050 firmware.bin
+# Wait for GDB, then: arm-none-eabi-gdb firmware.elf -ex 'target remote :3333'
+./build/cortex-m-emu --gdb 3333 firmware.bin
 ```
 
 Needs a host C compiler and `arm-none-eabi-binutils` (for the test programs).
@@ -55,4 +57,4 @@ Instruction-accurate, not cycle-accurate: no pipeline, wait states or bus timing
 - BME280 uses declared synthetic calibration and nearest representable raw inputs. Conversion is instantaneous; oversampling/filter/standby timing and sensor noise are absent. The firmware currently targets temperature output; pressure/humidity compensation is tested in the host model.
 - VCD's numeric timestamps are instruction steps despite its required `1 ns` declaration. UART/I2C are vectors, not synthesized serial waveforms. The file ends one step after the last instruction so viewers draw the last change; see the screenshots in `docs/img/`.
 - Register comparison is strict by default. Reset-LR differences need an exact explicit allowlist; BKPT and asynchronous timer boundaries need documented prefixes. The full matrix has been run against Renode 1.17; remaining differences are listed in docs/renode_differences.md.
-- Optional GDB RSP is deferred.
+- `--gdb` serves one GDB connection on 127.0.0.1: `?`, `g`/`G`, `p`/`P`, `m`/`M`, `c`, `s`, `Z0`/`z0`, `k`, `D`, Ctrl-C and the m-profile target description. GDB can read and write flash and SRAM only, so peripheral registers cannot be inspected and a debugger read never changes peripheral state. Breakpoints are an address table (flash is not patched). A breakpoint on the first instruction of an exception handler is not hit, because exception entry and that instruction run in one step. No hardware breakpoints, watchpoints or `vCont`.

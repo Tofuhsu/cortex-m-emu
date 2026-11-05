@@ -12,6 +12,8 @@ python3 tools/run_trace_matrix.py --firmware-repo ../stm32-baremetal-sensor-node
 
 The matrix reassembles every program with GNU as and rebuilds the firmware. For each case it compares the emulator's register trace with a Renode single-step trace after every instruction.
 
+Renode runs on the firmware repo's board file, `renode/stm32f446_nucleo.repl`. That file replaces I2C1 with `renode/STM32F4_I2C_AckModel.cs`, a patched copy of Renode's I2C model (see [the last section](#patched-i2c1-model)). The exporter loads that C# file with `include`. Results with the stock model are given where they differ.
+
 Comparison rules:
 - Only one known difference is allowed: reset LR (`0xFFFFFFFF` in the emulator, `0` in Renode), listed in `tools/reset_lr_allowlist.json`.
 - Programs run up to, but not including, BKPT.
@@ -27,8 +29,8 @@ Comparison rules:
 | 19 NVIC software pend | 4 (prefix) | Match up to IRQ entry |
 | 11 GPIOA | 17 | 1 difference at step 17 |
 | 21 GPIOB | 12 | 1 difference at step 12 |
-| 22 I2C chip ID | 60 | Differs from step 28 |
-| Firmware, first 20000 steps | 20000 | Identical for 764 steps; differs from step 765 |
+| 22 I2C chip ID | 60 | Differs from step 35 (stock model: from step 28) |
+| Firmware, first 20000 steps | 20000 | Identical for 1018 steps; differs from step 1019 (stock model: identical for 764 steps) |
 
 A mutation check confirms the comparison can catch a wrong flag. `tools/test_negs_against_renode.py` flips the C flag of NEGS in a temporary build. Compared against Renode's trace of program 25, the unmodified emulator matches all six steps, and the mutant is caught at step 6: xPSR is `0x41000000` in the mutant and `0x61000000` in Renode.
 
@@ -38,17 +40,19 @@ A mutation check confirms the comparison can catch a wrong flag. `tools/test_neg
 - **19: step that records exception entry.** Renode records IRQ entry in the same step as the ISPR store that pends it. The emulator records it in the same step as the first handler instruction. From step 6 on, both traces agree again, including the return.
 - **11: BSRR set and reset together.** RM0390 says set wins when both bits are written. The emulator reads back ODR = 0x20; Renode reads back 0.
 - **21: AFRH byte write.** Renode's GPIO ignores a byte store to AFRH; a word store of the same value reads back correctly. RM0390 allows byte access to GPIO registers. The emulator stores the byte. The firmware writes AFRH with a word store, so it is not affected.
-- **22: SR1 after the address byte, and BTF timing.**
-  - At step 28, Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only).
-  - RM0390 Rev 9 §24.6.6 (p768) says TxE is not set during the address phase, and Figure 275 in §24.3.3 (p752) shows TxE = 1 at EV8_1, after ADDR is cleared. The emulator follows this: it sets TxE when ADDR is cleared.
-  - The manual does not list every flag combination at each register read, so this does not prove that 0x82 cannot be read on hardware. The difference stays in the matrix.
-  - After that point, BTF arrives later in Renode, so the number of polling iterations differs.
-  - The program polls flags instead of counting cycles, so it reads the same chip ID (0x60) in both.
-- **Firmware: I2C1 CR1.ACK.** Step 765 is the first `read32(CR1) | START` in the BME280 driver. The emulator reads 0x401 (PE and ACK); Renode reads 0x1, because its I2C model does not store ACK (see below).
+- **22 and firmware: BTF timing.**
+  - At step 35 of program 22, the program waits for BTF after writing the register byte. The emulator completes the byte at once and reads SR1 = 0x84 (TxE and BTF); Renode sets BTF one byte period later in virtual time and reads 0x80. The program polls one more time in Renode.
+  - The firmware's first difference, step 1019, is the same wait in the BME280 driver.
+  - Both poll flags instead of counting cycles, so they read the same chip ID (0x60). This is a timing difference of the kind this emulator does not model; it is not hidden by a prefix.
+- **22 with the stock model: SR1 after the address byte.**
+  - At step 28, stock Renode reads SR1 = 0x82 (ADDR and TxE). The emulator reads 0x02 (ADDR only).
+  - RM0390 Rev 9 §24.6.6 (p768) says TxE is not set during the address phase, and Figure 275 in §24.3.3 (p752) shows TxE = 1 at EV8_1, after ADDR is cleared. The emulator and the patched model follow this: TxE is set when ADDR is cleared.
+  - The manual does not list every flag combination at each register read, so this does not prove that 0x82 cannot be read on hardware.
+- **Firmware with the stock model: I2C1 CR1.ACK.** Step 765 is the first `read32(CR1) | START` in the BME280 driver. The emulator reads 0x401 (PE and ACK); stock Renode reads 0x1, because its I2C model does not store ACK (see below). The patched model stores ACK, and this step matches.
 
-## Robot test "BME280 Reading Reaches UART" fails
+## Robot test "BME280 Reading Reaches UART" with the stock model
 
-The firmware prints `bme280 init error` in Renode. It prints `temperature: 25.00` on this emulator. Earlier firmware, without the all-zero calibration check, printed `temperature: 0.00` in Renode.
+With Renode's stock I2C1 model, the firmware prints `bme280 init error`. It prints `temperature: 25.00` on this emulator. Earlier firmware, without the all-zero calibration check, printed `temperature: 0.00` in Renode.
 
 What happens, from a Renode debug log (`logLevel -1` on `i2c1` and `i2c1.bme280`):
 
@@ -70,4 +74,17 @@ Cause in the Renode models:
 
 With ACK = 0, the master NACKs the only byte and no second byte arrives. RM0390 Rev 7 §24.6.6 (p770) defines BTF in reception as a new byte received while DR still holds an unread byte. So on hardware BTF should not set in this sequence.
 
-Decision: the firmware keeps the manual's single-byte sequence. No delay, extra byte, different polling condition or changed read length is added to make the Renode test pass. The Robot test stays enabled and fails for the reason above.
+Decision: the firmware keeps the manual's single-byte sequence. No delay, extra byte, different polling condition or changed read length is added to make the Renode test pass. The Renode model is patched instead.
+
+## Patched I2C1 model
+
+`renode/STM32F4_I2C_AckModel.cs` in the firmware repo is a copy of `STM32F1_I2C.cs` at the commit above (MIT license, header kept). Each change is marked `ACK model` in the source:
+
+1. CR1.ACK and CR1.POS are stored and read back.
+2. In receive mode, another byte arrives (BTF) only after an ACKed byte. With ACK = 0 before a one-byte read, BTF stays clear, so the DR read after STOP takes the path that calls `FinishTransmission()`.
+3. In receive mode, the first byte is received when ADDR is cleared (SR1 then SR2 read), not when the address byte is written. The master stretches SCL while ADDR is set (RM0390 §24.3.3), which is what lets firmware clear ACK in time.
+4. In transmit mode, TxE is set when ADDR is cleared, not during the address phase (RM0390 Rev 9 §24.6.6, p768).
+
+Changes 2 and 3 are both needed: with change 2 only, the stock receive timing still sets RxNE before the firmware clears ACK, and the log still shows the dropped address.
+
+The board file removes the stock `i2c1` (`i2c1: @none`) and registers the copy at 0x40005400 as `i2c1ack`, with the same interrupt lines, because a repl entry cannot change an existing peripheral's type. The Robot test and `sensor_node.resc` load the C# file with `include` first. With the patched model, the debug log shows `Stopping transmission` after the chip-ID read, the sensor accepts 0x88 as the register address, and all four Robot tests pass.

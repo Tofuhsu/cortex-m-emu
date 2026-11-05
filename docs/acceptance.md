@@ -6,13 +6,13 @@ Last updated 2026-11-05. Emulator and firmware built from source on macOS. Toolc
 | --- | --- | --- | --- |
 | A NVIC | ISER/ICER/ISPR/ICPR/IABR/IPR; IRQ n enters as exception 16+n; enable and PRIMASK gating | Passes emulator tests; 19 and 20 match Renode (19 up to IRQ entry) | Programs 19, 20; `tests/test_extended.c` |
 | B GPIOB | GPIOB reset values, AFRH, PB8/PB9 AF4, I2C1EN | Passes emulator tests; Renode ignores the AFRH byte store in program 21 | Program 21; `tests/test_extended.c` |
-| C I2C1 | Polling master; 1-, 2- and N-byte receive; repeated START; NACK sets AF | Passes emulator tests; program 22 differs from Renode in SR1 flag timing; Renode BME280 run fails (see below) | Program 22; `tests/test_extended.c`; firmware `make test-host` |
+| C I2C1 | Polling master; 1-, 2- and N-byte receive; repeated START; NACK sets AF | Passes emulator tests; program 22 differs from Renode in BTF timing; the Renode BME280 test passes with the patched I2C1 model (see below) | Program 22; `tests/test_extended.c`; firmware `make test-host` |
 | D BME280 model | Chip ID, calibration, physical value to raw value | Passes emulator tests | `tests/test_extended.c` (25.00 °C → 2500) |
-| D2 Firmware | Read temperature over I2C1, print on USART2 | Emulator: pass. Renode: 3 of 4 Robot tests pass; cause found in Renode's I2C model | See "Firmware runs" |
+| D2 Firmware | Read temperature over I2C1, print on USART2 | Emulator: pass. Renode: 4 of 4 Robot tests pass with a patched copy of Renode's I2C1 model (stock model: 3 of 4) | See "Firmware runs" |
 | New instructions | ADD reg T2; ANDS/EORS/NEGS/MVNS; LSLS/LSRS imm; UXTB; modified-immediate ADD/SUB/RSB/MVN/CMP/CMN; B\<cond\> T3; LSR.W reg; MUL; UDIV; LDR literal T2 | Passes emulator tests; all match Renode instruction by instruction | Programs 24–33; `tests/test_instructions.c` |
 | E VCD | Deterministic GPIO/USART/I2C output | Byte-identical across runs; opened in Surfer 0.7.0 | `tests/test_cli.py`; `tools/check_vcd.py`; `docs/img/` |
-| F Renode diff | Per-step register traces, strict compare, reset-LR allowlist only | Run: 30 of 33 programs match (01 at reset only; 13, 15, 19 over documented prefixes); 11, 21, 22 differ for documented reasons; NEGS mutation caught at step 6 | [renode_differences.md](renode_differences.md) |
-| G GDB stub | Optional | Deferred | — |
+| F Renode diff | Per-step register traces, strict compare, reset-LR allowlist only | Run with the firmware board file (patched I2C1): 30 of 33 programs match (01 at reset only; 13, 15, 19 over documented prefixes); 11, 21, 22 differ for documented reasons; firmware identical for 1018 steps; NEGS mutation caught at step 6 | [renode_differences.md](renode_differences.md) |
+| G GDB stub | RSP over TCP: break, continue, stepi, registers, memory, Ctrl-C | Done. Protocol tests in `make test`; a real `arm-none-eabi-gdb` 18.1 batch session on the firmware | `tests/test_gdbstub.py`; `tools/gdb_firmware.sh`; [week5.md](week5.md) |
 
 ## Test suite
 
@@ -20,7 +20,7 @@ Last updated 2026-11-05. Emulator and firmware built from source on macOS. Toolc
 - `test_instructions`: 9 groups covering the new instructions, plus programs 24–33.
 - `test_runner`: 20 of 20 checks.
 - `test_extended`: NVIC, I2C/GPIOB, BME280 and PRIMASK groups, plus programs 19–23.
-- Python tests for the trace and CLI tools.
+- Python tests for the trace, CLI and GDB stub tools.
 
 ## Firmware runs (cortex-m-emu)
 
@@ -35,9 +35,9 @@ The first interval includes startup. After that, intervals alternate because the
 
 ## Renode (firmware repo, `make test-all`)
 
-- Pass: Vector Table, User LED Blinks, UART Prints Boot Banner.
-- Fail: BME280 Reading Reaches UART. The firmware prints `bme280 init error`: it rejects the all-zero calibration it reads.
-- Cause: Renode's `STM32F1_I2C` model does not finish the one-byte chip-ID read, so its BME280 model drops the next register address and returns registers 0xD1–0xD6. Source lines and log: [renode_differences.md](renode_differences.md). The firmware keeps the RM0390 single-byte sequence; the test is not changed to pass.
+- All four tests pass: Vector Table, User LED Blinks, UART Prints Boot Banner, BME280 Reading Reaches UART (25.00, then 30.50). Three consecutive runs gave the same result.
+- The board file replaces I2C1 with `renode/STM32F4_I2C_AckModel.cs`, a copy of Renode's `STM32F1_I2C` with three changes that follow RM0390 (see [renode_differences.md](renode_differences.md)). The firmware and the test are unchanged.
+- With the stock model, the BME280 test fails: the one-byte chip-ID read never finishes, the BME280 model drops the next register address, and the firmware rejects the all-zero calibration with `bme280 init error`.
 
 ## VCD
 
@@ -52,5 +52,5 @@ Two runs of each command give byte-identical files. The VCD ends with a timestam
 
 ## Not yet done
 
-- Program 22 SR1 at EV6: RM0390 Rev 9 says TxE is not set during the address phase, which matches the emulator, but does not rule out Renode's 0x82 on hardware. A board read would settle it (see renode_differences.md).
+- Program 22 SR1 at EV6: RM0390 Rev 9 says TxE is not set during the address phase. The emulator and the patched Renode model follow that; stock Renode reads 0x82. A board read would settle what hardware shows (see renode_differences.md).
 - Hardware runs. Nothing here has been verified on a real board.

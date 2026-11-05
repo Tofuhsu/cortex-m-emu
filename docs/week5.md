@@ -38,6 +38,18 @@ Stepping runs inside Renode (`tools/renode_step_dump.py`), so a 20000-step firmw
 
 `python3 tools/test_trace_mutation.py --report build/mutation` compiles a temporary CPU whose AddWithCarry carry comparison is inverted. It runs program 03 in the reference and intentionally broken emulator and requires the comparator to find a carry difference. Formal source stays untouched. Actual local result: first C mismatch at step 2, six field mismatches over seven instructions. This validates fault detection, not agreement with Renode.
 
-## Optional GDB stub
+## GDB stub
 
-Deferred. No RSP server or claim of GDB batch validation is included. Pressure/humidity firmware output and additional instructions are also outside the current verified target result.
+`cortex-m-emu --gdb PORT image.bin` waits for one GDB connection on 127.0.0.1 (port 0 picks a free one and prints it). Packets: `?`, `g`/`G`, `p`/`P`, `m`/`M`, `c`, `s`, `Z0`/`z0`, `k`, `D`, `qSupported` and `qXfer:features:read`, which sends the `org.gnu.gdb.arm.m-profile` description (r0–r12, sp, lr, pc, xpsr as register 25). Checksums are verified and bad packets are answered with `-`. Ctrl-C (0x03) during `continue` stops with SIGINT.
+
+Design decisions:
+- Breakpoints are an address table checked before each step, so flash is never patched. `continue` from a breakpoint executes that instruction first.
+- GDB memory access covers flash and SRAM only (`bus_debug_byte`). Peripheral reads can have side effects (I2C SR1/SR2, DR), so they are refused rather than performed.
+- Writing xpsr changes only N, Z, C and V.
+
+Validation:
+- `tests/test_gdbstub.py` (part of `make test`) speaks the protocol to program 07: initial SP/PC/xPSR, a step, a breakpoint reached through BL (LR = 0x0800000F), SRAM write and read, a refused peripheral read, a register write, continue to BKPT with r0 = 116, a bad checksum and `k`.
+- `tools/gdb_firmware.sh` runs `arm-none-eabi-gdb` 18.1 in batch mode on the sensor firmware: `break main`, `continue`, `stepi`, `info registers`, `x/4wx 0x20000000`, `kill`. It stops at `main ()` at `src/main.c:140` and then at 0x08000920.
+- Ctrl-C was checked by hand on the firmware: the reply was `S02`, and the UART output and PA5 steps were the same as without GDB.
+
+Pressure/humidity firmware output and additional instructions are outside the current verified target result.
