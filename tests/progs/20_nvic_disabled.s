@@ -1,5 +1,5 @@
 @ Pending IRQ38 without ISER: no handler. r7 remains zero; ISPR bank1 bit6 remains.
-@ Renode single-step comparison pending: runtime unavailable in authoring environment.
+@ Renode single-step comparison pending.
 .syntax unified
 .cpu cortex-m4
 .thumb

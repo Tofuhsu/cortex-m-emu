@@ -3,9 +3,9 @@
 An instruction-set emulator for the Arm Cortex-M4 (ARMv7-M, Thumb/Thumb-2), written in C11.
 Goal: run my own bare-metal STM32F446 firmware (a separate project, not yet public) without hardware, with peripheral models for RCC, GPIO, USART and I2C (BME280).
 
-**Status:** The original 20 checks across 18 assembly programs pass. This update implements external NVIC pending/enable state, GPIOB/AFRH, polling I2C1, a configurable BME280 device, transaction VCD output and register-trace comparison tools. New host tests pass; the new firmware's ARM build, emitted-instruction support and Renode acceptance remain pending. See [the acceptance checkpoint](docs/acceptance.md); this is not a claim that the remaining plan is finished.
+**Status:** Week 4 of 5. All 33 test programs (`tests/progs/`, assembled with GNU as) and the host model tests pass. New since week 3: external NVIC interrupts, GPIOB, a polling I2C1 master, a BME280 model, VCD output, a register-trace compare tool and the extra Thumb/Thumb-2 instructions the sensor firmware needs. The BME280 firmware (`-O0`) runs on the emulator and prints `temperature: 25.00` and `temperature: 30.50` for the matching sensor inputs. Renode comparison of the new programs is in progress.
 
-Historical measurements are retained: the first busy-wait blink (`-O0`, 500,000 iterations) toggled PA5 every 3,500,022–3,500,024 instructions. The later UART/SysTick blink (RVR=15999, 500 ticks) had steady intervals of 7,999,995–8,000,004 instructions. These measurements precede the new BME280 firmware and do not establish its intervals. Counts are instructions, not time.
+Historical measurements are retained: the first busy-wait blink (`-O0`, 500,000 iterations) toggled PA5 every 3,500,022–3,500,024 instructions. The later UART/SysTick blink (RVR=15999, 500 ticks) had steady intervals of 7,999,995–8,000,004 instructions. With the BME280 firmware, PA5 intervals alternate between 8,002,010 and 7,997,988 instructions (25.00 °C input); each pair sums to about 16,000,000. The longer interval includes the sensor read and UART print after the LED turns off. Conditions: `-O0`, RVR = 15999, 500 ticks per half-period, one tick per instruction. Counts are instructions, not time.
 
 ## Build and test
 
@@ -13,7 +13,7 @@ Historical measurements are retained: the first busy-wait blink (`-O0`, 500,000 
 make         # build/cortex-m-emu
 make test    # assembles tests/progs/*.s and checks registers/flags after each program
 ./build/cortex-m-emu -t build/progs/07_calls.bin
-make test-host # host models/comparator only; no GNU ARM rebuild implied
+make test-host # host-only model tests, no ARM toolchain needed
 ./build/cortex-m-emu --vcd out.vcd build/progs/22_i2c_chip_id.bin
 ./build/cortex-m-emu --trace-regs regs.csv build/progs/03_adds_subs.bin
 # BME280 input in hundredths Celsius; default 2500:
@@ -26,7 +26,7 @@ Needs a host C compiler and `arm-none-eabi-binutils` (for the test programs).
 
 Original tests retain their existing Renode 1.17 cross-check notes. Where Renode and manuals disagree, the tests follow the manuals (reset LR, GPIO clock gating and BSRR set priority). SysTick uses instruction ticks rather than Renode virtual time; CSR.CLKSOURCE behavior also differs.
 
-Programs 19–23 and `tests/test_extended.c` add NVIC, GPIOB, I2C and PRIMASK checks. Locally, those program fixtures were encoded with a limited encoder because GNU ARM tools were unavailable; a clean GNU rebuild and fresh Renode comparison are pending. Host firmware C tests are separate from ARM instruction execution. See [NVIC decisions](docs/nvic.md), [week 4](docs/week4.md) and [week 5](docs/week5.md) for exact scope and validation limits.
+Programs 19–33 and the host tests in `tests/test_extended.c` and `tests/test_instructions.c` add NVIC, GPIOB, I2C, PRIMASK and new-instruction checks. They are assembled with GNU as like the earlier programs; Renode single-step comparison for them is in progress. Host firmware C tests are separate from ARM instruction execution. See [NVIC decisions](docs/nvic.md), [week 4](docs/week4.md) and [week 5](docs/week5.md) for exact scope and validation limits.
 
 ## Plan
 
@@ -54,9 +54,5 @@ Instruction-accurate, not cycle-accurate: no pipeline, wait states or bus timing
 - I2C1 supports polling seven-bit master transactions, 1/2/N byte receive endings and repeated START. No slave/IRQ/DMA/PEC or electrical/clock timing. CR2.FREQ/CCR/TRISE are stored only. Invalid configuration and gated transfers have diagnostic counters.
 - BME280 uses declared synthetic calibration and nearest representable raw inputs. Conversion is instantaneous; oversampling/filter/standby timing and sensor noise are absent. The firmware currently targets temperature output; pressure/humidity compensation is tested in the host model.
 - VCD's numeric timestamps are instruction steps despite its required `1 ns` declaration. UART/I2C are vectors, not synthesized serial waveforms. Viewer loading/screenshot are pending.
-- Register comparison is strict by default. Reset-LR differences need an exact explicit allowlist; BKPT and asynchronous timer boundaries need documented prefixes. No full Renode matrix has been run for this update.
+- Register comparison is strict by default. Reset-LR differences need an exact explicit allowlist; BKPT and asynchronous timer boundaries need documented prefixes. The full Renode comparison across all programs has not been run yet.
 - Optional GDB RSP is deferred.
-
-## AI assistance for this update
-
-The changes described in the acceptance checkpoint—including CPU/NVIC extensions, peripheral models, CLI/tools, added tests and documentation—were prepared with AI assistance and are awaiting the author's target validation/review. Earlier contributions remain recorded in the existing history.

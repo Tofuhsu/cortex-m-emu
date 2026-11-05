@@ -1,49 +1,46 @@
-# Remaining-work checkpoint — not final acceptance
+# Acceptance status
 
-Baseline input commits: emulator `fb7783a`; firmware `6151eed`.
+Last updated 2026-11-05. Emulator and firmware built from source on macOS. Toolchain: host `cc`, GNU ARM `arm-none-eabi-gcc` 16.2.0 and binutils, Renode 1.17.0 (build f1dd1b4af).
 
-| Item | Implemented | Evidence available | Outstanding acceptance |
+| Item | Scope | Status | Evidence |
 | --- | --- | --- | --- |
-| A NVIC | pending bitset, ISER/ICER/ISPR/ICPR/IABR/IPR, IRQ38->IPSR54, enable/PRIMASK gate | host tests; programs 19/20 execute via limited fixture encoding | clean GNU assembly; Renode single-step |
-| B GPIOB | reset values, AFRH lanes, AF4/open-drain queries, I2C1EN | host tests; program 21 | GNU rebuild / manual review |
-| C I2C1 | polling master, 1/2/N bytes, repeated START, NACK/AF, flag sequences, gating/events | host tests; actual firmware C driver; program 22 | real Renode transfer comparison |
-| D BME280 | synthetic calibration, nearest raw T/P/H, reset/forced/normal/skip/shadow | independent full compensation from bus-read calibration/raw; 25.00->2500 | review design/quantization choices |
-| D2 firmware | init, checked int32 compensation, UART formatting, periodic LED schedule, mask restoration | actual C driver runs against bus, including 25.00/30.50 and masked caller | ARM GCC build; identify/implement emitted missing CPU instructions; actual new binary UART/LED; Robot |
-| E VCD | deterministic transaction vectors and honest step axis | byte equality and parser tests on actual emulator USART/I2C runs | actual viewer loading and screenshot |
-| F diff | post-step exporter, strict comparator, exact allowlist, mutation test | wrong actual CPU carry caught at step 2 | real Renode exporter run and full per-program/prefix matrix |
-| G GDB | deliberately deferred (optional) | none | deferred |
-| H docs | README changes previewed; week4/week5/design notes | this report | final measured Status after target work |
+| A NVIC | ISER/ICER/ISPR/ICPR/IABR/IPR; IRQ n enters as exception 16+n; enable and PRIMASK gating | Passes emulator tests; Renode comparison pending | Programs 19, 20; `tests/test_extended.c` |
+| B GPIOB | GPIOB reset values, AFRH, PB8/PB9 AF4, I2C1EN | Passes emulator tests | Program 21; `tests/test_extended.c` |
+| C I2C1 | Polling master; 1-, 2- and N-byte receive; repeated START; NACK sets AF | Passes emulator tests; Renode BME280 run fails (see below) | Program 22; `tests/test_extended.c`; firmware `make test-host` |
+| D BME280 model | Chip ID, calibration, physical value to raw value | Passes emulator tests | `tests/test_extended.c` (25.00 °C → 2500) |
+| D2 Firmware | Read temperature over I2C1, print on USART2 | Emulator: pass. Renode: 3 of 4 Robot tests pass | See "Firmware runs" |
+| New instructions | ADD reg T2; ANDS/EORS/NEGS/MVNS; LSLS/LSRS imm; UXTB; modified-immediate ADD/SUB/RSB/MVN/CMP/CMN; B\<cond\> T3; LSR.W reg; MUL; UDIV; LDR literal T2 | Passes emulator tests; Renode comparison pending | Programs 24–33; `tests/test_instructions.c` |
+| E VCD | Deterministic GPIO/USART/I2C output | Byte-identical across runs; viewer check pending | `tests/test_cli.py`; `tools/check_vcd.py` |
+| F Renode diff | Per-step register traces, strict compare, reset-LR allowlist only | Tools in place; full matrix not run | `tools/compare_traces.py`, `tools/run_trace_matrix.py` |
+| G GDB stub | Optional | Deferred | — |
 
-## Actual local validation
+## Test suite
 
-- Existing C test runner: **20/20 passed**, using the baseline binary fixtures included in the ZIP.
-- Four added host groups: NVIC, I2C/GPIOB, BME280 compensation and MSR PRIMASK: passed, including UBSan.
-- Five new program fixtures (19–23): passed through CPU/bus/models. Because GNU ARM binutils are unavailable, these were encoded with a deliberately limited fixture encoder, not assembled with GNU tools. Normal Makefile still invokes GNU assembler; this distinction must not be lost.
-- Python comparator tests and CLI/VCD tests: passed. UART test 16 emitted `OK\n` and halted at 51 steps. GPIO VCD events were steps 12/14/16. UART and I2C VCD repeated runs were byte-identical.
-- Actual firmware C driver, host build with UBSan: init, one/two/N reads, temperatures 25.00/30.50/-12.34/endpoints, formatting, PRIMASK restoration and NACK recovery passed. This is **not** execution of ARM firmware instructions.
-- Deliberately inverted AddWithCarry C in a temporary CPU: caught at step 2. This is not Renode comparison.
-- The ZIP's **original** `firmware.bin` ran 20,000,000 steps through the updated emulator: CRLF boot banner, PA5 at 447, 8,000,470, 16,000,467. The intervals 8,000,023 and 7,999,997 describe the old UART/SysTick firmware only, not the new I2C firmware.
+`make clean && make test`, all programs assembled with GNU as:
+- `test_instructions`: 9 groups covering the new instructions, plus programs 24–33.
+- `test_runner`: 20 of 20 checks.
+- `test_extended`: NVIC, I2C/GPIOB, BME280 and PRIMASK groups, plus programs 19–23.
+- Python tests for the trace and CLI tools.
 
-## Blocking environment gap
+## Firmware runs (cortex-m-emu)
 
-No `arm-none-eabi-gcc/as/ld/objdump`, Renode or PulseView executable is installed. Package retrieval attempts were blocked. Consequently `make clean && make test` from source, new firmware compilation and Renode/Robot/viewer checks have NOT completed. CI has not been run or observed for these changes. No push was performed.
+Conditions: `-O0`, RVR = 15999, 500 ticks per half-period, one SysTick tick per executed instruction. Counts are instructions, not time.
 
-Do not mark this checkpoint complete, quote new firmware PA5 instruction intervals, claim 0 Renode mismatches, or infer passing target tests from host tests.
+| Input | UART output | PA5 transitions (step) | Intervals |
+| --- | --- | --- | --- |
+| `--temperature-centi 2500` | `sensor-node boot`, then `temperature: 25.00` after every second half-period | 5528, 8005556, 16007566, 24005554, 32007564 | 8,000,028; 8,002,010; 7,997,988; 8,002,010 |
+| `--temperature-centi 3050` | `temperature: 30.50` | 5627, 8005655, 16007764, 24005648, 32007765 | 8,000,028; 8,002,109; 7,997,884; 8,002,117 |
 
-## Smallest next input
+The first interval includes startup. After that, intervals alternate because the sensor read and UART print run after the LED turns off, before the next set. Absolute deadlines keep each pair near 16,000,000, so the error does not accumulate.
 
-After applying the firmware source changes on the user's ARM GCC host:
+## Renode (firmware repo, `make test-all`)
 
-```sh
-bash tools/build_review_artifacts.sh
-```
+- Pass: Vector Table, User LED Blinks, UART Prints Boot Banner.
+- Fail: BME280 Reading Reaches UART. The firmware prints `temperature: 0.00` because the calibration values it reads are all zero.
+- I2C access log: in the calibration read (register 0x88), Renode's BME280 drops the register-address byte ("write without specifying address"). It then returns registers 0xD1–0xD6, continuing from the previous chip-ID read. Root cause is under investigation; no change to the firmware or Robot test has been made.
 
-Return `build/firmware-review-artifacts.zip`. It contains the actual ELF, binary, disassembly, map and source/compiler hashes. The emulator can then be run here against that exact new binary and missing instructions added based on actual objdump encodings, as required by the plan. Alternatively provide a Linux x86_64 GNU ARM toolchain to enable that work locally.
+## Not yet done
 
-For the eventual full target check (requires GNU ARM plus Renode):
-
-```sh
-bash tools/validate_remaining.sh /absolute/path/stm32-baremetal-sensor-node
-```
-
-Run this from the emulator repo. It fails clearly if tools are missing, or if the emulator halts on an undefined instruction. It does not label an incomplete Renode matrix as complete. The Robot LED/UART/BME280 tests are now enabled so a future CI run will enforce them, but that run has not happened here.
+- Renode single-step comparison for programs 19–33, and a firmware-prefix comparison.
+- Opening the VCD output in PulseView or GTKWave.
+- Hardware runs. Nothing here has been verified on a real board.
