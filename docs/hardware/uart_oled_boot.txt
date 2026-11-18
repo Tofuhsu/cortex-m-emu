@@ -1,0 +1,7 @@
+temperature: 27.20
+ÿsensor-node boot
+temperature: 27.21
+temperature: 27.20
+temperature: 27.21
+temperature: 27.22
+temperature: 27.21

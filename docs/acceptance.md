@@ -64,7 +64,8 @@ Board MB1136 rev C, firmware commit 49765e3, reset clock (16 MHz HSI), OpenOCD 0
 - BME280 (HW-611 module, 0x76): chip ID 0x60 passes. A finger on the sensor raised the reading from 34.54 to 34.71 °C; after release it fell to 33.04 °C within 20 s.
 - Logic analyzer (24 MHz FX2, sigrok-cli, 4 MHz sample rate): SCL runs at 100.0 kHz. The chip-ID read ends with 0x60, NACK, STOP, and the next transfer writes 0x88, the case stock Renode drops. The 3-byte temperature read ends with ACK, ACK, NACK, STOP.
 - I2C1 SR1 at master-transmitter EV6 is 0x0082 (ADDR and TxE), at full speed, 3 runs out of 3. The emulator read 0x02 until this check and now reads 0x82; see renode_differences.md.
+- SSD1306 (128x64 module at 0x3C, on the same bus as the BME280): the init sequence's 25 command bytes are all ACKed. The first full frame matches the firmware repo's `tests/emu/oled_25.00.pbm` byte for byte except the temperature row, which is blank at that point; later temperature updates differ only in the digits. A photo of the panel matches the emulator frame by eye.
 
 ## Not yet done
 
-- SSD1306 on a real module.
+None from the original plan.
