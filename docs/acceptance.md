@@ -1,6 +1,6 @@
 # Acceptance status
 
-Last updated 2026-11-05. Emulator and firmware built from source on macOS. Toolchain: host `cc`, GNU ARM `arm-none-eabi-gcc` 16.2.0 and binutils, Renode 1.17.0 (build f1dd1b4af), Surfer 0.7.0.
+Last updated 2026-11-18. Emulator and firmware built from source on macOS. Toolchain: host `cc`, GNU ARM `arm-none-eabi-gcc` 16.2.0 and binutils, Renode 1.17.0 (build f1dd1b4af), Surfer 0.7.0.
 
 | Item | Scope | Status | Evidence |
 | --- | --- | --- | --- |
