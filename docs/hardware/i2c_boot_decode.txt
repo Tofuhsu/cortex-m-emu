@@ -1,0 +1,110 @@
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: C5
+ACK
+Data read: 00
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: D0
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 60
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: 88
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: F2
+ACK
+Data read: 6E
+ACK
+Data read: 29
+ACK
+Data read: 67
+ACK
+Data read: 32
+ACK
+Data read: 00
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: F2
+ACK
+Data write: 01
+ACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: F4
+ACK
+Data write: 23
+ACK
+Stop
+Start
+Write
+Address write: 3C
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: C5
+ACK
+Data read: 00
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: C2
+ACK
+Data read: 00
+NACK
+Stop

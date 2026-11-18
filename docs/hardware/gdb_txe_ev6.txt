@@ -1,0 +1,27 @@
+0x08000ca2 in ringbuf_get (rb=0x200004c0 <rx>, byte=0x2001ffaf "\b\270\377\001 \331\n") at src/ringbuf.c:39
+39	}
+Unable to match requested speed 2000 kHz, using 1800 kHz
+Unable to match requested speed 2000 kHz, using 1800 kHz
+[stm32f4x.cpu] halted due to debug-request, current mode: Thread 
+xPSR: 0x01000000 pc: 0x08000f34 msp: 0x20020000
+Hardware assisted breakpoint 1 at 0x80004bc: file src/i2c1.c, line 79.
+
+Breakpoint 1, clear_addr () at src/i2c1.c:79
+79	    (void)read32(SR1);
+#0  clear_addr () at src/i2c1.c:79
+#1  0x080005d2 in i2c1_read (address7=118 'v', reg=208 '\320', out=0x2001ffb7 "@\364\001", count=1) at src/i2c1.c:110
+EV6 (ADDR set, before SR2 read): SR1=0x0082
+Note: automatically using hardware breakpoints for read-only addresses.
+halted: PC: 0x080004be
+i2c1_read (address7=118 'v', reg=208 '\320', out=0x2001ffb7 "@\364\001", count=1) at src/i2c1.c:111
+111	    if (!wait_flag(TXE)) goto fail;
+after ADDR cleared:              SR1=0x0080
+
+Breakpoint 1, clear_addr () at src/i2c1.c:79
+79	    (void)read32(SR1);
+#0  clear_addr () at src/i2c1.c:79
+#1  0x0800065c in i2c1_read (address7=118 'v', reg=208 '\320', out=0x2001ffb7 "@\364\001", count=1) at src/i2c1.c:119
+2nd clear_addr (receive EV6):    SR1=0x0002
+Unable to match requested speed 2000 kHz, using 1800 kHz
+Unable to match requested speed 2000 kHz, using 1800 kHz
+[Inferior 1 (Remote target) detached]

@@ -1,0 +1,12 @@
+run 1:
+hit1 flag=0x1 status=0x0001 attempts=1
+hit2 flag=0x2 status=0x0082 attempts=20
+hit3 flag=0x80 status=0x0080 attempts=0
+run 2:
+hit1 flag=0x1 status=0x0001 attempts=1
+hit2 flag=0x2 status=0x0082 attempts=20
+hit3 flag=0x80 status=0x0080 attempts=0
+run 3:
+hit1 flag=0x1 status=0x0001 attempts=1
+hit2 flag=0x2 status=0x0082 attempts=20
+hit3 flag=0x80 status=0x0080 attempts=0

@@ -1,0 +1,8 @@
+temperature: 30.65
+ÿsensor-node boot
+ssd1306 not found
+temperature: 30.65
+temperature: 30.65
+temperature: 30.65
+temperature: 30.65
+temperature: 30.66

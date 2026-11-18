@@ -54,7 +54,17 @@ Two runs of each command give byte-identical files. The VCD ends with a timestam
 
 `make && make test` passes in an Ubuntu 24.04 container (GCC 13.3, binutils 2.42), the same packages as the GitHub workflow. All 33 programs assemble to the same bytes as with binutils from GNU ARM 16.2.0.
 
+## Hardware checks (NUCLEO-F446RE, 2026-11-18)
+
+Board MB1136 rev C, firmware commit 49765e3, reset clock (16 MHz HSI), OpenOCD 0.12.0 over the on-board ST-LINK. Logs and captures are in [hardware/](hardware/README.md).
+
+- SWD/GDB: break at `main`, `stepi`, `info registers`, `x/4wx`. At `main+8` all 17 core registers (r0–r12, SP, LR, PC, xPSR) match the emulator stopped at the same point with the same GDB commands.
+- RCC_AHB1ENR reads 0 after reset, the value the emulator uses.
+- LD2 blinks every 0.5 s. UART: `sensor-node boot`, then a BME280 reading every second.
+- BME280 (HW-611 module, 0x76): chip ID 0x60 passes. A finger on the sensor raised the reading from 34.54 to 34.71 °C; after release it fell to 33.04 °C within 20 s.
+- Logic analyzer (24 MHz FX2, sigrok-cli, 4 MHz sample rate): SCL runs at 100.0 kHz. The chip-ID read ends with 0x60, NACK, STOP, and the next transfer writes 0x88, the case stock Renode drops. The 3-byte temperature read ends with ACK, ACK, NACK, STOP.
+- I2C1 SR1 at master-transmitter EV6 is 0x0082 (ADDR and TxE), at full speed, 3 runs out of 3. The emulator read 0x02 until this check and now reads 0x82; see renode_differences.md.
+
 ## Not yet done
 
-- Program 22 SR1 at EV6: RM0390 Rev 9 says TxE is not set during the address phase. The emulator and the patched Renode model follow that; stock Renode reads 0x82. A board read would settle what hardware shows (see renode_differences.md).
-- Hardware runs. Nothing here has been verified on a real board.
+- SSD1306 on a real module.

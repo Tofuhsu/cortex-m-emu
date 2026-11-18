@@ -1,0 +1,51 @@
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: BF
+ACK
+Data read: 00
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: C2
+ACK
+Data read: 00
+NACK
+Stop
+Start
+Write
+Address write: 76
+ACK
+Data write: FA
+ACK
+Start repeat
+Read
+Address read: 76
+ACK
+Data read: 86
+ACK
+Data read: BE
+ACK
+Data read: 00
+NACK
+Stop

@@ -1,0 +1,50 @@
+0x08000ada in wait_period (start=0x2001ffcc, ms=500) at src/main.c:134
+134	    while ((uint32_t)(ticks - *start) < ms) {
+Unable to match requested speed 2000 kHz, using 1800 kHz
+Unable to match requested speed 2000 kHz, using 1800 kHz
+[stm32f4x.cpu] halted due to debug-request, current mode: Thread 
+xPSR: 0x01000000 pc: 0x08000f34 msp: 0x20020000
+pc             0x8000ada           0x8000ada <wait_period+18>
+sp             0x2001ffb8          0x2001ffb8
+Breakpoint 1 at 0x8000b06: file src/main.c, line 142.
+Note: automatically using hardware breakpoints for read-only addresses.
+
+Breakpoint 1, main () at src/main.c:142
+142	    RCC_AHB1ENR |= GPIOAEN;
+halted: PC: 0x08000b08
+0x08000b08	142	    RCC_AHB1ENR |= GPIOAEN;
+r0             0x0                 0
+r1             0x0                 0
+r2             0x20000550          536872272
+r3             0x40023830          1073887280
+r4             0x0                 0
+r5             0x0                 0
+r6             0x0                 0
+r7             0x2001ffc8          537001928
+r8             0x0                 0
+r9             0x0                 0
+r10            0x0                 0
+r11            0x0                 0
+r12            0x0                 0
+sp             0x2001ffc8          0x2001ffc8
+lr             0x8000fbb           134221755
+pc             0x8000b08           0x8000b08 <main+8>
+xPSR           0x61000000          1627389952
+fpscr          0x0                 0
+msp            0x2001ffc8          0x2001ffc8
+psp            0x0                 0x0
+primask        0x0                 0
+basepri        0x0                 0
+faultmask      0x0                 0
+control        0x0                 0
+0x20000000 <t1>:	0x00000000	0x00000000	0x00000000	0x00000000
+$1 = 0x0
+halted: PC: 0x08000b0a
+halted: PC: 0x08000b0c
+halted: PC: 0x08000b10
+halted: PC: 0x08000b12
+143	    (void)RCC_AHB1ENR; /* Read back after enabling the peripheral clock. */
+$2 = 0x1
+Unable to match requested speed 2000 kHz, using 1800 kHz
+Unable to match requested speed 2000 kHz, using 1800 kHz
+[Inferior 1 (Remote target) detached]

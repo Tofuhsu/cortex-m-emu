@@ -23,7 +23,7 @@ say so.
 | AHB1ENR reset | 00000000 | RM0390 Rev7 6.3.10 p143; model's existing reset0 is correct |
 | I2C CR1/CR2 | offsets00/04; PE0, START8, STOP9, ACK10, POS11; FREQ[5:0] | RM0390 24.6.1–2; Rev9 contents pp762/764; bit text retrieved in Rev7 |
 | I2C DR/SR1 | offsets10/14; SB0 ADDR1 BTF2 RXNE6 TXE7 AF10 | RM0390 Rev9 24.6.5–6 p766 |
-| I2C TxE at address phase | "TxE is not set during address phase"; TxE=1 at EV8_1, after ADDR is cleared | RM0390 Rev9 24.6.6 p768; 24.3.3 figure275 p752 |
+| I2C TxE at address phase | "TxE is not set during address phase". On an STM32F446 the first SR1 read with ADDR set is 0x0082, so TxE is already set at EV6 once the address byte has gone out | RM0390 Rev9 24.6.6 p768; 24.3.3 figure275 p752; measured, docs/hardware |
 | I2C SR2 | offset18; MSL0 BUSY1 TRA2 | RM0390 24.6.7, Rev9 contents p769; indexed bit table checked |
 | I2C CCR/TRISE | offsets1C/20 | RM0390 24.6.8–9, Rev9 contents pp770–771; formula text also checked in Rev7 pp771–772 |
 | BME280 identity/calibration | D0=60; T1/T2/T3 at88–8D | Bosch revision1.24 5.4.1 p27; 4.2.2 table16 p24 |
