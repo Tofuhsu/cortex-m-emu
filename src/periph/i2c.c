@@ -7,6 +7,8 @@
  * SB: START -> set; SR1 read observing SB then DR write -> clear.
  * ADDR: acknowledged address -> set; SR1 read then SR2 -> clear (see 24.6.7).
  * TXE/BTF: successful immediate write -> both set; next DR write -> clear/refill.
+ * TXE is also set together with ADDR for a master transmitter (measured on an
+ * STM32F446: the first SR1 read with ADDR set is 0x0082, see docs/hardware).
  * RXNE: at least one receive token; BTF: two tokens (DR + shift register).
  * AF: address/data NACK -> set; SR1 write-zero or PE=0 -> clear.
  * Receiver data is obtained from device.read at DR consumption, not prefetched:
@@ -179,7 +181,10 @@ static void write_dr(i2c_t *s, uint8_t byte)
         s->selected->start(s->selected->ctx, s->reading);
         s->sr1 |= I2C_ADDR;
         if (s->reading) s->sr2 &= ~4u;
-        else s->sr2 |= 4u; /* TRA */
+        else {
+            s->sr2 |= 4u; /* TRA */
+            s->sr1 |= I2C_TXE; /* DR is empty once the address byte has gone out */
+        }
     } else if (s->selected && !s->reading && !(s->sr1 & (I2C_ADDR | I2C_AF))) {
         s->sr1 &= ~(I2C_TXE | I2C_BTF);
         bool ack = s->selected->write(s->selected->ctx, byte);

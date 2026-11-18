@@ -95,7 +95,9 @@ static void clear_address(fixture_t *f) { (void)rd(f,I2C_SR1); (void)rd(f,I2C_SR
 static void rx(fixture_t *f, uint8_t addr, uint8_t *out, unsigned n)
 {
     unsigned cr=I2C_PE | (n>1?I2C_ACK:0) | (n==2?I2C_POS:0);
-    address(f,addr,cr); clear_address(f);
+    address(f,addr,cr);
+    assert((i2c_peek(f->i2c,I2C_SR1)&0xFFu)==I2C_ADDR); /* receiver EV6: no TXE/RXNE yet */
+    clear_address(f);
     if(n==1) { wr(f,I2C_CR1,I2C_PE|I2C_STOP); assert(rd(f,I2C_SR1)&I2C_RXNE); *out=(uint8_t)rd(f,I2C_DR); }
     else if(n==2) {
         wr(f,I2C_CR1,I2C_PE|I2C_POS); assert(rd(f,I2C_SR1)&I2C_BTF);
@@ -117,6 +119,8 @@ static void test_i2c(void)
     wr(&f,I2C_DR,0xA0); assert(i2c_peek(f.i2c,I2C_SR1)&I2C_SB);
     (void)rd(&f,I2C_SR1); (void)rd(&f,I2C_SR2); wr(&f,I2C_DR,0xA0);
     (void)rd(&f,I2C_SR2); assert(i2c_peek(f.i2c,I2C_SR1)&I2C_ADDR);
+    /* Silicon (STM32F446): ADDR and TXE together at transmitter EV6, ADDR alone for a receiver. */
+    assert((i2c_peek(f.i2c,I2C_SR1)&0xFFu)==(I2C_ADDR|I2C_TXE));
     clear_address(&f); assert(!(rd(&f,I2C_SR1)&I2C_ADDR));
     wr(&f,I2C_DR,0xD0); assert((rd(&f,I2C_SR1)&(I2C_BTF|I2C_TXE))==(I2C_BTF|I2C_TXE));
     uint8_t data[16]; rx(&f,0xA1,data,1); assert(data[0]==0x80 && !fake.ack[0]);
