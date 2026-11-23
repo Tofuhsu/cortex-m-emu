@@ -51,6 +51,6 @@ Faults other than the SVC escalation are not raised: undefined instructions, bus
 - Programs 36 (IT blocks) and 37 (PSP, SVC, BASEPRI, IRQ priorities, a nested IRQ, PendSV after return) are assembled with GNU as and checked in `tests/test_rtos.c`, together with host checks of every model above, SVC escalation and WFI.
 - Earlier tests that expected encodings such as SXTH, ANDS.W, ORN, ADDW, LSL.W (register), MLA and SDIV to halt now check their results instead.
 - The sensor-node firmware still passes its emulator check (`tests/emu/run.sh` in that repo), also when built with `-O2` and `-Os`.
-- The FreeRTOS logger's integration tests run in that repo (`make test-emu`).
+- The FreeRTOS logger (FreeRTOS V11.1.0, `-O0` and `-O2` builds) boots and passes its 15 integration tests in that repo (`make check`, 2026-11-23).
 
 No Renode comparison was run for the new instructions or models on this branch.
