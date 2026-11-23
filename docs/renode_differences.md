@@ -33,8 +33,16 @@ Comparison rules:
 | 22 I2C chip ID | 60 | Match (default timing: differs from step 35; stock model: from step 28) |
 | Blink firmware `6151eed`, up to the first SysTick entry | 16439 | Match (entry is step 16440) |
 | Sensor firmware (BME280, UART interrupts, SSD1306), first 20000 steps | 20000 | Identical for 4299 steps; differs from step 4300, the first USART2 interrupt entry |
+| 36 IT blocks (added 2026-11-23) | 24 | Match |
+| 37 exceptions (added 2026-11-23) | 172 | Differs only at the 4 exception entries (see below) |
 
 A mutation check confirms the comparison can catch a wrong flag. `tools/test_negs_against_renode.py` flips the C flag of NEGS in a temporary build. Compared against Renode's trace of program 25, the unmodified emulator matches all six steps, and the mutant is caught at step 6: xPSR is `0x41000000` in the mutant and `0x61000000` in Renode.
+
+### Rerun after the decoder rewrite (2026-11-23)
+
+The decoder was rewritten for FreeRTOS support (see [freertos.md](freertos.md)), so the whole matrix was run again with the same command, Renode build and board file. Programs 01–35, the blink firmware and the first difference of the sensor firmware give the same results as in the table above. The sensor firmware's emulator trace (first 20,000 steps) is byte-identical between the previous build (`fe97f58`) and the new one.
+
+Program 37 and the sensor firmware differ at exception entries in the same way. When an exception is taken, Renode records the entry as its own step (PC at the handler's first instruction, not yet executed). The emulator enters and executes the handler's first instruction in one step, so the step before it shows the previous instruction. The rows after each entry agree again. In program 37 this accounts for every difference (4 entries). In the sensor firmware it accounts for the 19 entries before step 7835. At step 7835 an I2C1 DR read (address `0x40005410`) returns `0xC0` in the emulator and `0` in Renode; this was not examined further and is the first difference not explained by entry placement. It was already present before the rewrite.
 
 ### Explained differences
 

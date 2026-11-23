@@ -1,6 +1,6 @@
 # NVIC milestone decisions
 
-> Update 2026-11-23: on the `freertos-support` branch the IPR priorities do arbitrate, exceptions nest, and IABR reports the active bits of every active exception. See [freertos.md](freertos.md). The text below describes the week 3 milestone as it was.
+> Update 2026-11-23: the IPR priorities do arbitrate, exceptions nest, and IABR reports the active bits of every active exception. See [freertos.md](freertos.md). The text below describes the week 3 milestone as it was.
 
 [PM0214 4.3](https://www.st.com/resource/en/programming_manual/DM00046982-.pdf), ARM ARM B3.4, and RM0390's vector table are the references. ISER starts at E000E100, ICER E000E180, ISPR E000E200, ICPR E000E280, IABR E000E300 and IPR E000E400. USART2 is IRQ38, hence exception54 and vector offset D8.
 

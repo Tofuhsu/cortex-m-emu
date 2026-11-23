@@ -1,6 +1,6 @@
-# FreeRTOS support (branch `freertos-support`, 2026-11-23)
+# FreeRTOS support (2026-11-23)
 
-This branch adds what a FreeRTOS firmware ([stm32-freertos-logger](../../stm32-freertos-logger)) needs to run unchanged on the emulator. Below are the decisions behind each model and what each one leaves out. The models are instruction-accurate at most, so nothing here describes time on a real chip.
+These changes add what a FreeRTOS firmware (stm32-freertos-logger, not yet public) needs to run unchanged on the emulator. Below are the decisions behind each model and what each one leaves out. The models are instruction-accurate at most, so nothing here describes time on a real chip.
 
 Section and table numbers of RM0390, PM0214, DDI0403E and the STM32F446/BME280 datasheets that appear in the comments of the files added on this branch were written from memory of those documents, without opening the PDFs. Treat them as pointers to check. The page-checked references are the ones listed in [manual_checks.md](manual_checks.md).
 
