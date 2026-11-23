@@ -18,6 +18,7 @@
  *     --flash-out file  write the whole 512 KiB flash at exit (load it again as the
  *         image to model a power cycle that keeps flash)
  *     --gpio-log pins  print level changes of output pins, e.g. PA0,PA1,PB0
+ *     --uart-out file  write USART2 TX bytes to this file instead of stdout
  *     --stats  print step, sleep, exception, DMA, flash and watchdog counters at exit
  *     --temperature-centi n, --pressure-pa n, --humidity-percent n  BME280 inputs
  *     --die-temp-centi n, --vdda-mv n  ADC inputs (internal sensor, VDDA)
@@ -77,6 +78,7 @@ typedef struct {
     iwdg_t *iwdg;
     flash_if_t *flash;
     vcd_t *vcd;
+    FILE *uart_out;
     int trace;
     /* Host input schedule. */
     rx_chunk_t rx[MAX_RX_CHUNKS];
@@ -199,8 +201,9 @@ static void print_usart_byte(void *ctx, uint8_t byte)
 {
     machine_t *m = ctx;
     vcd_uart(m->vcd, m->cpu.steps + 1u, byte);
-    putchar(byte);
-    fflush(stdout);
+    FILE *out = m->uart_out ? m->uart_out : stdout;
+    putc(byte, out);
+    if (!m->uart_out) fflush(stdout);
 }
 
 static void observe_i2c(void *ctx, i2c_event_t event)
@@ -307,7 +310,8 @@ int main(int argc, char **argv)
     int32_t temperature = 2500, die_temperature = 2500;
     long pressure = 101325, humidity = 50, vdda = 3300;
     bool stats = false;
-    const char *path = NULL, *vcd_path = NULL, *regs_path = NULL, *oled_path = NULL, *flash_path = NULL;
+    const char *path = NULL, *vcd_path = NULL, *regs_path = NULL, *oled_path = NULL, *flash_path = NULL,
+               *uart_path = NULL;
     long gdb_port = -1;
     m.button_hold = 20000;
     for (int i = 1; i < argc; i++) {
@@ -319,6 +323,7 @@ int main(int argc, char **argv)
         else if (strcmp(argv[i], "--trace-regs") == 0 && i + 1 < argc) regs_path = argv[++i];
         else if (strcmp(argv[i], "--oled-dump") == 0 && i + 1 < argc) oled_path = argv[++i];
         else if (strcmp(argv[i], "--flash-out") == 0 && i + 1 < argc) flash_path = argv[++i];
+        else if (strcmp(argv[i], "--uart-out") == 0 && i + 1 < argc) uart_path = argv[++i];
         else if (strcmp(argv[i], "--stats") == 0) stats = true;
         else if (strcmp(argv[i], "--gpio-log") == 0 && i + 1 < argc) {
             if (!parse_pins(argv[++i], &m)) goto usage;
@@ -359,11 +364,11 @@ int main(int argc, char **argv)
     }
     if (!path) goto usage;
     /* Outputs must not truncate the input image or each other. */
-    const char *outputs[] = {vcd_path, regs_path, oled_path, flash_path};
-    for (unsigned a = 0; a < 4; ++a) {
+    const char *outputs[] = {vcd_path, regs_path, oled_path, flash_path, uart_path};
+    for (unsigned a = 0; a < 5; ++a) {
         if (!outputs[a]) continue;
         if (same_file(path, outputs[a])) goto usage;
-        for (unsigned b = a + 1; b < 4; ++b)
+        for (unsigned b = a + 1; b < 5; ++b)
             if (outputs[b] && same_file(outputs[a], outputs[b])) goto usage;
     }
 
@@ -435,6 +440,7 @@ int main(int argc, char **argv)
     for (unsigned i = 0; i < sizeof periphs / sizeof periphs[0]; ++i)
         if (bus_add_periph(m.bus, periphs[i]) != 0) { fprintf(stderr, "cannot register peripheral models\n"); goto cleanup; }
     if (vcd_path && !(m.vcd = vcd_open(vcd_path))) { perror(vcd_path); goto cleanup; }
+    if (uart_path && !(m.uart_out = fopen(uart_path, "wb"))) { perror(uart_path); goto cleanup; }
     if (regs_path) {
         regs = fopen(regs_path, "w");
         if (!regs) { perror(regs_path); goto cleanup; }
@@ -552,6 +558,7 @@ int main(int argc, char **argv)
     }
     if (flash_path && write_file(flash_path, bus_flash_data(m.bus), FLASH_SIZE) != 0) result = 1;
 cleanup:
+    if (m.uart_out && fclose(m.uart_out)) result = 1;
     if (regs && (ferror(regs) || fflush(regs))) result = 1;
     if (regs && fclose(regs)) result = 1;
     if (!vcd_close(m.vcd)) { fprintf(stderr, "VCD write failed\n"); result = 1; }
@@ -565,7 +572,7 @@ cleanup:
 usage:
     fprintf(stderr, "usage: %s [-n max_steps] [-t] [--vcd file] [--trace-regs file] [--gdb port] "
                     "[--uart-rx text] [--uart-rx-at step text] [--button-press step] [--button-hold steps] "
-                    "[--oled-dump file] [--flash-out file] [--gpio-log PA0,PB1,...] [--stats] "
+                    "[--oled-dump file] [--flash-out file] [--uart-out file] [--gpio-log PA0,PB1,...] [--stats] "
                     "[--temperature-centi -4000..8500] [--pressure-pa 30000..110000] [--humidity-percent 0..100] "
                     "[--die-temp-centi -4000..12500] [--vdda-mv 1800..3600] [--iwdg-steps-per-lsi n] firmware.bin\n",
             argv[0]);
