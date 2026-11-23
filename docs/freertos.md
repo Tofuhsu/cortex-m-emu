@@ -1,6 +1,6 @@
 # FreeRTOS support (branch `freertos-support`, 2026-11-23)
 
-What was added so that a FreeRTOS firmware ([stm32-freertos-logger](../../stm32-freertos-logger)) runs unchanged on the emulator, the decisions behind each model, and what each model leaves out. Everything here is instruction-accurate at most: no statement below is about time on a real chip.
+This branch adds what a FreeRTOS firmware ([stm32-freertos-logger](../../stm32-freertos-logger)) needs to run unchanged on the emulator. Below are the decisions behind each model and what each one leaves out. The models are instruction-accurate at most, so nothing here describes time on a real chip.
 
 Section and table numbers of RM0390, PM0214, DDI0403E and the STM32F446/BME280 datasheets that appear in the comments of the files added on this branch were written from memory of those documents, without opening the PDFs. Treat them as pointers to check. The page-checked references are the ones listed in [manual_checks.md](manual_checks.md).
 
@@ -23,7 +23,7 @@ IT blocks: the IT state is part of xPSR, is stacked and restored on exceptions, 
 - WFI and WFE put the core to sleep. A sleeping core wakes when an exception could preempt if PRIMASK were clear. Each step while asleep runs no instruction but still counts as a step, so SysTick, DMA and IWDG keep running; `cpu.sleep_steps` counts them. SLEEPONEXIT and SLEEPDEEP are stored only.
 - The local exclusive monitor is cleared on exception entry and return.
 
-Faults other than the SVC escalation are not raised: undefined instructions, bus faults and invalid returns stop the emulator with a message, which is what a test runner needs.
+Faults other than the SVC escalation are not raised: undefined instructions, bus faults and invalid returns stop the emulator with a message, so a test run fails at the faulting instruction.
 
 ## Peripherals
 
