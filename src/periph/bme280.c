@@ -16,6 +16,9 @@
 struct bme280 {
     uint8_t address, reg[256], pointer, active_hum, snapshot[8];
     bool expect_register;
+    /* SPI front end (datasheet 6.3): first byte = register with bit 7 =
+     * read flag; reads auto-increment, writes are control/data pairs. */
+    bool spi_selected, spi_have_control, spi_reading;
     int32_t temperature;
     uint32_t humidity, pressure;
 };
@@ -160,4 +163,38 @@ uint8_t bme280_peek(const bme280_t *b, uint8_t reg) { return b->reg[reg]; }
 i2c_device_t bme280_as_device(bme280_t *b)
 {
     return (i2c_device_t){b->address, b, start_device, write_device, read_device, stop_device};
+}
+
+/* SPI 4-wire (datasheet 6.3.1-6.3.3). The register address is the 7 bits
+ * after the R/W bit with bit 7 forced to 1, so the I2C path is reused. */
+static void spi_select(void *ctx, bool selected)
+{
+    bme280_t *b = ctx;
+    if (b->spi_selected && !selected) stop_device(b);
+    b->spi_selected = selected;
+    b->spi_have_control = false;
+    b->spi_reading = false;
+}
+
+static uint8_t spi_transfer(void *ctx, uint8_t mosi)
+{
+    bme280_t *b = ctx;
+    if (b->spi_reading) return read_device(b, true);
+    if (!b->spi_have_control) {
+        b->spi_have_control = true;
+        start_device(b, false);
+        (void)write_device(b, (uint8_t)(mosi | 0x80u));
+        if (mosi & 0x80u) { b->spi_reading = true; start_device(b, true); }
+        return 0xFFu;
+    }
+    /* Write: data byte for the current control byte; the next byte is a
+     * new control byte (SPI multi-write sends pairs, like I2C). */
+    (void)write_device(b, mosi);
+    b->spi_have_control = false;
+    return 0xFFu;
+}
+
+spi_device_t bme280_as_spi_device(bme280_t *b)
+{
+    return (spi_device_t){b, spi_select, spi_transfer};
 }

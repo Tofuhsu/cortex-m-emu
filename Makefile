@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  := -std=c11 -Wall -Wextra -Werror -O2 -g -Isrc
-LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c src/periph/ssd1306.c src/gdbstub.c
+LIB_SRC := src/bus.c src/cpu.c src/loader.c src/vcd.c src/periph/rcc.c src/periph/gpio.c src/periph/systick.c src/periph/usart.c src/periph/nvic.c src/periph/i2c.c src/periph/bme280.c src/periph/ssd1306.c src/periph/scb.c src/periph/exti.c src/periph/spi.c src/periph/dma.c src/periph/adc.c src/periph/iwdg.c src/periph/flash.c src/gdbstub.c
 BUILD   := build
 
 # Test programs are assembled with the ARM toolchain and linked at the start of flash.
@@ -32,8 +32,12 @@ $(BUILD)/test_instructions: tests/test_instructions.c $(LIB_SRC) src/*.h src/per
 $(BUILD)/test_extended: tests/test_extended.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
 	$(CC) $(CFLAGS) tests/test_extended.c $(LIB_SRC) -o $@
 
-test: $(BUILD)/test_instructions $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/cortex-m-emu progs
+$(BUILD)/test_rtos: tests/test_rtos.c $(LIB_SRC) src/*.h src/periph/*.h | $(BUILD)
+	$(CC) $(CFLAGS) tests/test_rtos.c $(LIB_SRC) -o $@
+
+test: $(BUILD)/test_instructions $(BUILD)/test_extended $(BUILD)/test_runner $(BUILD)/test_rtos $(BUILD)/cortex-m-emu progs
 	./$(BUILD)/test_instructions --programs
+	./$(BUILD)/test_rtos
 	./$(BUILD)/test_runner
 	./$(BUILD)/test_extended --programs
 	python3 tests/test_trace_tools.py

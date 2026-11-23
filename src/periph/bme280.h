@@ -2,12 +2,16 @@
 #define PERIPH_BME280_H
 
 #include "i2c.h"
+#include "spi.h"
 
 typedef struct bme280 bme280_t;
 bme280_t *bme280_new(uint8_t address);
 void bme280_free(bme280_t *bme);
 void bme280_reset(bme280_t *bme);
 i2c_device_t bme280_as_device(bme280_t *bme);
+/* The same chip on SPI (mode 0 or 3; the mode bits are not checked). Use
+ * either the I2C or the SPI front end, not both at once. */
+spi_device_t bme280_as_spi_device(bme280_t *bme);
 /* Physical inputs persist across chip reset. Conversion is instantaneous;
  * forced mode snapshots on trigger; normal mode updates on host input change.
  * Units: hundredths Celsius, Q22.10 %RH, integer pascals.
