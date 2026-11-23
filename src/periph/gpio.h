@@ -1,4 +1,4 @@
-/* Minimal STM32F446 GPIOA register model; no electrical pin simulation. */
+/* Minimal STM32F446 GPIOA/B/C register model; no electrical pin simulation. */
 #ifndef PERIPH_GPIO_H
 #define PERIPH_GPIO_H
 
@@ -10,6 +10,8 @@
 
 #define GPIOA_BASE          0x40020000u
 #define GPIOB_BASE          0x40020400u
+#define GPIOC_BASE          0x40020800u
+#define GPIO_MAX_EXTRA_OBSERVERS 4u
 #define GPIO_MODER_OFFSET   0x00u
 #define GPIO_OTYPER_OFFSET  0x04u
 #define GPIO_OSPEEDR_OFFSET 0x08u
@@ -22,7 +24,7 @@
 
 typedef struct gpio gpio_t;
 
-/* Accepts GPIOA/B with the corresponding RCC enable bit.
+/* Accepts GPIOA/B/C with the corresponding RCC enable bit.
  * The name is copied. rcc is borrowed and must outlive the GPIO model.
  * Returns NULL on allocation failure or unsupported arguments.
  */
@@ -50,5 +52,13 @@ void gpio_set_inputs(gpio_t *gpio, uint16_t levels);
 typedef void (*gpio_odr_change_fn)(void *ctx, const char *name,
                                    uint16_t old_odr, uint16_t new_odr);
 void gpio_set_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx);
+/* Extra ODR observers (up to GPIO_MAX_EXTRA_OBSERVERS), called after the main
+ * one. Returns false when every slot is taken. */
+bool gpio_add_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx);
+/* Called by gpio_set_inputs() when the injected IDR levels change. */
+void gpio_set_input_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx);
+uint16_t gpio_get_inputs(const gpio_t *gpio);
+/* MODER field of a pin: 0 input, 1 output, 2 AF, 3 analog. */
+unsigned gpio_pin_mode(const gpio_t *gpio, unsigned pin);
 
 #endif

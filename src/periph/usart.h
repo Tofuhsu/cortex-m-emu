@@ -1,6 +1,6 @@
 /* STM32F446 USART2: immediate 8-bit TX routed through PA2/AF7, host-fed RX,
- * and the TXE/RXNE/ORE interrupt request. No baud timing, DMA, parity or
- * SR-read sequence state.
+ * the TXE/RXNE/ORE interrupt request and DMA requests (CR3.DMAT/DMAR). No
+ * baud timing, parity or SR-read sequence state. CR2 is stored only.
  */
 #ifndef PERIPH_USART_H
 #define PERIPH_USART_H
@@ -17,6 +17,10 @@
 #define USART_DR_OFFSET  0x04u
 #define USART_BRR_OFFSET 0x08u
 #define USART_CR1_OFFSET 0x0Cu
+#define USART_CR2_OFFSET 0x10u
+#define USART_CR3_OFFSET 0x14u
+#define USART_CR3_DMAR (UINT32_C(1) << 6)
+#define USART_CR3_DMAT (UINT32_C(1) << 7)
 
 #define USART_SR_ORE  (UINT32_C(1) << 3)
 #define USART_SR_RXNE (UINT32_C(1) << 5)
@@ -47,7 +51,8 @@ usart_t *usart_new(const rcc_t *rcc, const gpio_t *gpioa);
 /* Reset registers and stats without emitting bytes; preserve observer wiring. */
 void usart_reset(usart_t *usart);
 void usart_free(usart_t *usart);
-/* Bus borrows this model; it accepts only aligned 32-bit SR/DR/BRR/CR1 access. */
+/* Bus borrows this model; it accepts aligned 32-bit SR/DR/BRR/CR1/CR2/CR3
+ * access, and byte/halfword DR access (DMA with PSIZE = byte). */
 periph_t usart_as_periph(usart_t *usart);
 
 /* Called once per routed byte, after status is committed. ctx is borrowed.
@@ -77,5 +82,9 @@ bool usart_receive(usart_t *usart, uint8_t byte);
  */
 uint32_t usart_peek(const usart_t *usart, uint32_t offset);
 usart_stats_t usart_get_stats(const usart_t *usart);
+/* DMA request lines (ctx is the usart_t): TX = DMAT and TXE with UE/TE on;
+ * RX = DMAR and RXNE. */
+bool usart_dma_tx_request(void *usart);
+bool usart_dma_rx_request(void *usart);
 
 #endif

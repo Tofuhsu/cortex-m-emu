@@ -15,6 +15,10 @@ struct gpio {
     uint64_t gated_writes, bad_accesses;
     gpio_odr_change_fn observer;
     void *observer_ctx;
+    gpio_odr_change_fn extra[GPIO_MAX_EXTRA_OBSERVERS];
+    void *extra_ctx[GPIO_MAX_EXTRA_OBSERVERS];
+    gpio_odr_change_fn input_observer;
+    void *input_ctx;
 };
 
 static bool valid_access(uint32_t offset, int size)
@@ -42,9 +46,10 @@ static void set_odr(gpio_t *gpio, uint16_t value)
 {
     uint16_t old = gpio->odr;
     gpio->odr = value;
-    if (old != value && gpio->observer) {
-        gpio->observer(gpio->observer_ctx, gpio->name, old, value);
-    }
+    if (old == value) return;
+    if (gpio->observer) gpio->observer(gpio->observer_ctx, gpio->name, old, value);
+    for (unsigned i = 0; i < GPIO_MAX_EXTRA_OBSERVERS; ++i)
+        if (gpio->extra[i]) gpio->extra[i](gpio->extra_ctx[i], gpio->name, old, value);
 }
 
 static uint32_t gpio_read(void *ctx, uint32_t offset, int size)
@@ -127,7 +132,8 @@ gpio_t *gpio_new(const char *name, uint32_t base,
                  const rcc_t *rcc, unsigned enable_bit)
 {
     if (!name || !*name || !rcc || !((base == GPIOA_BASE && enable_bit == RCC_GPIOA_ENABLE_BIT) ||
-          (base == GPIOB_BASE && enable_bit == RCC_GPIOB_ENABLE_BIT))) {
+          (base == GPIOB_BASE && enable_bit == RCC_GPIOB_ENABLE_BIT) ||
+          (base == GPIOC_BASE && enable_bit == RCC_GPIOC_ENABLE_BIT))) {
         return NULL;
     }
     gpio_t *gpio = calloc(1, sizeof *gpio);
@@ -152,10 +158,11 @@ void gpio_reset(gpio_t *gpio)
     /* RM0390 Rev9 7.4.1 p185; 7.4.3-4 p186: separate A/B reset values.
      * PB8/PB9 AF4 mapping: DS10693 Rev11 table11 p59 (see gpio_pin_is_af).
      */
-    gpio->moder = gpio->base == GPIOA_BASE ? 0xA8000000u : 0x00000280u;
+    bool a = gpio->base == GPIOA_BASE, b = gpio->base == GPIOB_BASE;
+    gpio->moder = a ? 0xA8000000u : b ? 0x00000280u : 0;
     gpio->otyper = 0;
-    gpio->ospeedr = gpio->base == GPIOA_BASE ? 0x0C000000u : 0x000000C0u;
-    gpio->pupdr = gpio->base == GPIOA_BASE ? 0x64000000u : 0x00000100u;
+    gpio->ospeedr = a ? 0x0C000000u : b ? 0x000000C0u : 0;
+    gpio->pupdr = a ? 0x64000000u : b ? 0x00000100u : 0;
     gpio->afrh = 0;
     gpio->afrl = 0; /* RM0390 7.4.9. */
     gpio->idr = 0; /* Deterministic model default; hardware reset is undefined. */
@@ -207,7 +214,31 @@ uint64_t gpio_bad_access_count(const gpio_t *gpio)
 
 void gpio_set_inputs(gpio_t *gpio, uint16_t levels)
 {
+    uint16_t old = gpio->idr;
     gpio->idr = levels;
+    if (old != levels && gpio->input_observer)
+        gpio->input_observer(gpio->input_ctx, gpio->name, old, levels);
+}
+
+uint16_t gpio_get_inputs(const gpio_t *gpio) { return gpio->idr; }
+
+bool gpio_add_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx)
+{
+    for (unsigned i = 0; i < GPIO_MAX_EXTRA_OBSERVERS; ++i) {
+        if (!gpio->extra[i]) { gpio->extra[i] = callback; gpio->extra_ctx[i] = ctx; return true; }
+    }
+    return false;
+}
+
+void gpio_set_input_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx)
+{
+    gpio->input_observer = callback;
+    gpio->input_ctx = ctx;
+}
+
+unsigned gpio_pin_mode(const gpio_t *gpio, unsigned pin)
+{
+    return pin < 16u ? (gpio->moder >> (2u * pin)) & 3u : 0u;
 }
 
 void gpio_set_observer(gpio_t *gpio, gpio_odr_change_fn callback, void *ctx)

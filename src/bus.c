@@ -19,7 +19,17 @@ struct bus {
     char fault_msg[128];
     uint32_t unmapped_count;
     uint32_t last_unmapped_addr;
+    bus_flash_write_fn flash_write;
+    void *flash_write_ctx;
 };
+
+void bus_set_flash_write_handler(bus_t *bus, bus_flash_write_fn fn, void *ctx)
+{
+    bus->flash_write = fn;
+    bus->flash_write_ctx = ctx;
+}
+
+uint8_t *bus_flash_data(bus_t *bus) { return bus->flash; }
 
 bus_t *bus_new(void)
 {
@@ -138,6 +148,10 @@ static void bus_write(bus_t *bus, uint32_t addr, uint32_t value, int size)
     uint8_t *mem = memory_ptr(bus, addr, size, &is_flash);
     if (mem) {
         if (is_flash) {
+            if (bus->flash_write &&
+                bus->flash_write(bus->flash_write_ctx, (uint32_t)(mem - bus->flash), value, size)) {
+                return;
+            }
             set_fault(bus, "write to flash", addr);
             return;
         }

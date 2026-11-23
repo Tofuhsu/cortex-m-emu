@@ -13,7 +13,7 @@
 #define SRAM_BASE  0x20000000u
 #define SRAM_SIZE  0x00020000u /* 128 KiB */
 
-#define BUS_MAX_PERIPHS 32
+#define BUS_MAX_PERIPHS 48
 
 /*
  * A memory-mapped peripheral. `offset` is relative to `base`; `size` is the
@@ -34,6 +34,15 @@ bus_t *bus_new(void);
 void bus_free(bus_t *bus);
 
 int bus_add_periph(bus_t *bus, periph_t periph);
+
+/* A CPU/DMA write to flash goes to this handler (the flash interface model).
+ * It returns true when it handled the write (programmed or flagged an error);
+ * false, or no handler, makes the write a bus fault. `offset` is from the
+ * start of flash. The handler may modify bus_flash_data() directly.
+ */
+typedef bool (*bus_flash_write_fn)(void *ctx, uint32_t offset, uint32_t value, int size);
+void bus_set_flash_write_handler(bus_t *bus, bus_flash_write_fn fn, void *ctx);
+uint8_t *bus_flash_data(bus_t *bus);
 
 /* Copy an image into flash, bypassing the read-only check. Returns 0 on success. */
 int bus_load_flash(bus_t *bus, uint32_t offset, const uint8_t *data, uint32_t len);
