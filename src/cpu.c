@@ -517,10 +517,14 @@ static bool load_value(cpu_t *cpu, bus_t *bus, uint32_t address, unsigned size,
                        bool sign, uint32_t *value)
 {
     switch (size) {
-    case 1: *value = bus_read8(bus, address);
-        if (sign) *value = (uint32_t)(int32_t)(int8_t)(uint8_t)*value; break;
-    case 2: *value = bus_read16(bus, address);
-        if (sign) *value = (uint32_t)(int32_t)(int16_t)(uint16_t)*value; break;
+    case 1:
+        *value = bus_read8(bus, address);
+        if (sign) *value = (uint32_t)(int32_t)(int8_t)(uint8_t)*value;
+        break;
+    case 2:
+        *value = bus_read16(bus, address);
+        if (sign) *value = (uint32_t)(int32_t)(int16_t)(uint16_t)*value;
+        break;
     case 4: *value = bus_read32(bus, address); break;
     default:
         cpu_halt(cpu, "unsupported memory transfer width %u", size);
