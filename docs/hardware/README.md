@@ -14,6 +14,7 @@ NUCLEO-F446RE (MB1136 rev C) with a HW-611 BME280 module on I2C1 (PB8 = SCL, PB9
 | `uart_oled_boot.txt` | UART after a reset with the display connected; no `ssd1306 not found` line |
 | `oled_boot.sr`, `oled_decode.txt` | Capture across a reset with both devices on the bus: BME280 setup, SSD1306 init, the first full frame and the once-a-second updates |
 | `oled_closeup.png`, `setup.jpg` | The display showing `SENSOR NODE` and `T 27.93 C`, and the whole setup |
+| `wiring.md`, `wiring_top.jpg` | Bench wiring for every check from 2026-11-18 on, and the 10-second bench check |
 
 The `.sr` files open in PulseView or with `sigrok-cli -i FILE -P i2c:scl=D2:sda=D0`. In the two BME280 captures D2 is SCL and D0 is SDA; in `oled_boot.sr` D0 is SCL and D1 is SDA (`-P i2c:scl=D0:sda=D1`).
 
