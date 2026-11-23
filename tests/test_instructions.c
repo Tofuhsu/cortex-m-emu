@@ -124,10 +124,14 @@ static void test_uxtb(bus_t *b)
     }
     initialize(&c,b,15); c.r[3]=0xABCD1280;
     assert(execute(&c,b,0xB2DB,0xBE00)==0 && c.r[3]==0x80 && flags_of(&c)==15);
-    /* Nearby extension operations were not accidentally accepted. */
-    const uint16_t unsupported[]={0xB200,0xB240,0xB280};
-    for(unsigned i=0;i<3;++i) { initialize(&c,b,15); assert(execute(&c,b,unsupported[i],0)==-1); }
-    printf("PASS I4 UXTB: %u register/value/flag combinations and extension decode boundaries\n",count);
+    /* The neighbouring extension opcodes: SXTH, SXTB, UXTH (flags unchanged). */
+    const struct {uint16_t insn; uint32_t expected;} extends[]={
+        {0xB213,0xFFFF8281u},{0xB253,0xFFFFFF81u},{0xB293,0x00008281u}};
+    for(unsigned i=0;i<3;++i) {
+        initialize(&c,b,15); c.r[2]=0x12348281u;
+        assert(execute(&c,b,extends[i].insn,0xBE00)==0 && c.r[3]==extends[i].expected && flags_of(&c)==15);
+    }
+    printf("PASS I4 UXTB: %u register/value/flag combinations; SXTH/SXTB/UXTH neighbours\n",count);
 }
 
 static unsigned oracle_arithmetic(uint32_t x,uint32_t imm,unsigned kind,uint32_t *result)
@@ -189,10 +193,6 @@ static void test_modified_arithmetic(bus_t *b)
     const uint16_t unsupported[][2]={
         {0xF107,0x0D08}, /* Rd=SP without SP source */
         {0xF10F,0x0308}, /* PC source on ADD */
-        {0xF010,0x0101}, /* logical S=1 remains deliberately unsupported */
-        {0xF063,0x0101}, /* ORN is not MVN */
-        {0xF207,0x0308}, /* ADDW plain imm12, not modified immediate */
-        {0xF2A7,0x0308}, /* SUBW plain imm12 */
         {0xF107,0x1300}, /* repeated pattern with zero imm8 */
     };
     for(unsigned i=0;i<sizeof unsupported/sizeof unsupported[0];++i) {
@@ -200,6 +200,16 @@ static void test_modified_arithmetic(bus_t *b)
         assert(execute(&c,b,unsupported[i][0],unsupported[i][1])==-1);
         assert(flags_of(&c)==15 && c.r[PC]==FLASH_BASE+8u); unchanged_except(&c,&before,16);
     }
+    /* ANDS.W sets N/Z and the ThumbExpandImm carry; ORN is not MVN; ADDW/SUBW
+     * take a plain imm12 (not a modified immediate). */
+    initialize(&c,b,1); c.r[0]=0x80000001u;
+    assert(execute(&c,b,0xF010,0x0101)==0 && c.r[1]==1 && flags_of(&c)==1);
+    initialize(&c,b,0); c.r[3]=0x10;
+    assert(execute(&c,b,0xF063,0x0101)==0 && c.r[1]==0xFFFFFFFEu && flags_of(&c)==0);
+    initialize(&c,b,15); c.r[7]=100;
+    assert(execute(&c,b,0xF207,0x0308)==0 && c.r[3]==108 && flags_of(&c)==15);
+    initialize(&c,b,15); c.r[7]=100;
+    assert(execute(&c,b,0xF2A7,0x0308)==0 && c.r[3]==92 && flags_of(&c)==15);
     printf("PASS I5 modified arithmetic: %u edge/flag cases, exact vectors, CMP/CMN aliases, arithmetic C and SP rules\n",count);
 }
 
@@ -252,8 +262,14 @@ static void test_register_lsr(bus_t *b)
     }
     initialize(&c,b,15); c.r[2]=0x80000000u; c.r[3]=31;
     assert(execute(&c,b,0xFA22,0xF303)==0 && c.r[3]==1 && flags_of(&c)==15);
-    const uint16_t unsupported[][2]={{0xFA02,0xF303},{0xFA42,0xF303},{0xFA62,0xF303},
-                                    {0xFA2D,0xF303},{0xFA22,0xFD03},{0xFA22,0xF30F}};
+    /* LSL/ASR/ROR (register) share the decode. */
+    initialize(&c,b,15); c.r[2]=0x80000001u; c.r[3]=4;
+    assert(execute(&c,b,0xFA02,0xF303)==0 && c.r[3]==0x10 && flags_of(&c)==15);
+    initialize(&c,b,15); c.r[2]=0x80000001u; c.r[3]=4;
+    assert(execute(&c,b,0xFA42,0xF303)==0 && c.r[3]==0xF8000000u && flags_of(&c)==15);
+    initialize(&c,b,15); c.r[2]=0x80000001u; c.r[3]=4;
+    assert(execute(&c,b,0xFA62,0xF303)==0 && c.r[3]==0x18000000u && flags_of(&c)==15);
+    const uint16_t unsupported[][2]={{0xFA2D,0xF303},{0xFA22,0xFD03},{0xFA22,0xF30F}};
     for(unsigned i=0;i<sizeof unsupported/sizeof unsupported[0];++i) {
         initialize(&c,b,15); assert(execute(&c,b,unsupported[i][0],unsupported[i][1])==-1);
     }
@@ -278,7 +294,14 @@ static void test_multiply_divide(bus_t *b)
     assert(execute(&c,b,0xFBB2,0xF3F3)==0 && c.r[3]==0x55555555u && flags_of(&c)==15);
     initialize(&c,b,15); c.r[2]=0xFFFFFFFEu; c.r[3]=3;
     assert(execute(&c,b,0xFB02,0xF303)==0 && c.r[3]==0xFFFFFFFAu && flags_of(&c)==15);
-    const uint16_t unsupported[][2]={{0xFB02,0x1303},{0xFB92,0xF3F3},
+    /* MLA r3,r2,r3,r1 and SDIV r3,r2,r3 share the decode. */
+    initialize(&c,b,15); c.r[1]=10; c.r[2]=3; c.r[3]=4;
+    assert(execute(&c,b,0xFB02,0x1303)==0 && c.r[3]==22 && flags_of(&c)==15);
+    initialize(&c,b,15); c.r[2]=(uint32_t)-7; c.r[3]=2;
+    assert(execute(&c,b,0xFB92,0xF3F3)==0 && c.r[3]==(uint32_t)-3 && flags_of(&c)==15);
+    initialize(&c,b,15); c.r[2]=0x80000000u; c.r[3]=0xFFFFFFFFu;
+    assert(execute(&c,b,0xFB92,0xF3F3)==0 && c.r[3]==0x80000000u);
+    const uint16_t unsupported[][2]={
         {0xFB0D,0xF303},{0xFB02,0xFD03},{0xFB02,0xF30F},
         {0xFBBD,0xF3F3},{0xFBB2,0xFDF3},{0xFBB2,0xF3FF}};
     for(unsigned i=0;i<sizeof unsupported/sizeof unsupported[0];++i) {

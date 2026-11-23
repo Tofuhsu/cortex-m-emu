@@ -5,7 +5,7 @@
 
 /* PM0214 4.3.2-4.3.7 / ARM ARM B3.4: architectural capacity, 240 IRQs.
  * This is not a claim that all these vectors exist on STM32F446.
- * Priority bytes retain four implemented high bits, but do not arbitrate yet.
+ * Priority bytes retain four implemented high bits and feed CPU arbitration.
  */
 struct nvic {
     cpu_t *cpu;
@@ -19,6 +19,12 @@ static bool enabled(void *ctx, unsigned irq)
     const nvic_t *n = ctx;
     return irq < CPU_EXTERNAL_IRQ_COUNT &&
            (n->enabled[irq / 32u] & (UINT32_C(1) << (irq % 32u))) != 0;
+}
+
+static uint8_t priority(void *ctx, unsigned irq)
+{
+    const nvic_t *n = ctx;
+    return irq < CPU_EXTERNAL_IRQ_COUNT ? n->priority[irq] : 0;
 }
 
 static uint32_t access_reg(nvic_t *n, uint32_t offset, uint32_t value, int size, bool write)
@@ -53,7 +59,7 @@ static uint32_t access_reg(nvic_t *n, uint32_t offset, uint32_t value, int size,
         unsigned exception = bank * 32u + bit + 16u;
         uint32_t flag = UINT32_C(1) << bit;
         if (group == 0x200u) {
-            if (n->cpu->ipsr == exception) result |= flag;
+            if (cpu_exception_active(n->cpu, exception)) result |= flag;
         } else {
             if (write && (value & flag)) {
                 if (group == 0x100u) cpu_pend_exception(n->cpu, exception);
@@ -82,6 +88,7 @@ nvic_t *nvic_new(cpu_t *cpu)
     if (n) {
         n->cpu = cpu;
         cpu_set_irq_gate(cpu, enabled, n);
+        cpu_set_irq_priority(cpu, priority, n);
     }
     return n;
 }
@@ -94,11 +101,13 @@ void nvic_reset(nvic_t *n)
         cpu_clear_pending_exception(n->cpu, 16u + irq);
     n->bad_accesses = 0;
     cpu_set_irq_gate(n->cpu, enabled, n);
+    cpu_set_irq_priority(n->cpu, priority, n);
 }
 
 void nvic_free(nvic_t *n)
 {
     if (n && n->cpu->irq_enabled_ctx == n) cpu_set_irq_gate(n->cpu, NULL, NULL);
+    if (n && n->cpu->irq_priority_ctx == n) cpu_set_irq_priority(n->cpu, NULL, NULL);
     free(n);
 }
 
